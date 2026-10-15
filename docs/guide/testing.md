@@ -11,7 +11,9 @@ connection.
 ```typescript
 interface ISorobanRpcClient {
   simulateTransaction(transaction: Transaction): Promise<rpc.Api.SimulateTransactionResponse>
-  sendTransaction(transaction: Transaction | FeeBumpTransaction): Promise<rpc.Api.SendTransactionResponse>
+  sendTransaction(
+    transaction: Transaction | FeeBumpTransaction,
+  ): Promise<rpc.Api.SendTransactionResponse>
   getTransaction(hash: string): Promise<rpc.Api.GetTransactionResponse>
   getAccount(publicKey: string): Promise<Account>
   getLedgerEntries(...keys: xdr.LedgerKey[]): Promise<rpc.Api.GetLedgerEntriesResponse>
@@ -83,7 +85,7 @@ const mockClient = makeMockRpcClient()
 
 vi.mocked(mockClient.simulateTransaction)
   .mockResolvedValueOnce(restoreRequiredResponse) // 1st simulate: restore needed
-  .mockResolvedValueOnce(cleanResponse)            // 2nd simulate: after restore
+  .mockResolvedValueOnce(cleanResponse) // 2nd simulate: after restore
 vi.mocked(mockClient.sendTransaction)
   .mockResolvedValueOnce({ hash: 'restore-hash' })
   .mockResolvedValueOnce({ hash: 'original-hash' })
@@ -92,7 +94,10 @@ vi.mocked(mockClient.getTransaction).mockResolvedValue({
 })
 vi.mocked(mockClient.getAccount).mockResolvedValue(someAccount)
 
-const sdk = new SorobanResurrect({ rpcUrl: 'https://soroban-testnet.stellar.org', rpcClient: mockClient })
+const sdk = new SorobanResurrect({
+  rpcUrl: 'https://soroban-testnet.stellar.org',
+  rpcClient: mockClient,
+})
 
 const result = await sdk.submitWithRestore({ transaction, wallet })
 
@@ -115,5 +120,10 @@ Lower-level functions such as `executeWithRestore`, `waitForTransaction`, and
 `detectArchivedEntries` accept an `ISorobanRpcClient` directly as their
 `server` parameter, so the same test doubles work at that level too if you're
 testing below the `SorobanResurrect` facade.
+
+The SDK's `src/__tests__/fixtures/soroban-rpc/v1.ts` fixture set covers success,
+restore-required, error, malformed, and extended simulation response shapes.
+Keep representative RPC shape changes in a new fixture version and exercise
+them through the response guards and extraction helpers.
 
 See also: [API Reference](/api/sdk), [`SorobanResurrectConfig`](/api/types#sorobanresurrectconfig).
