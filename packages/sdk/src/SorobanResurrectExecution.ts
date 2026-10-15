@@ -22,6 +22,7 @@ import { SorobanResurrectStateManager } from './SorobanResurrectState.js'
 import { SorobanResurrectSimulator } from './SorobanResurrectSimulation.js'
 import type { ISorobanRpcClient } from './RpcClient.js'
 import { asTxHash, asHistoryEntryId } from './branded-types.js'
+import { RetryingRpcClient } from './RpcClient.js'
 
 /**
  * Handles all transaction execution concerns for a `SorobanResurrect` instance:
@@ -325,7 +326,7 @@ export class SorobanResurrectExecutor {
         : this._config
 
     const result = await executeWithRestore({
-      server: this._server,
+      server: options.retry ? new RetryingRpcClient(this._server, options.retry) : this._server,
       transaction,
       wallet,
       config: effectiveConfig,

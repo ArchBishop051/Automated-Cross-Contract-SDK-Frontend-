@@ -32,6 +32,10 @@ import type {
   TransactionHistoryEntry,
   LedgerEntryTTLInfo,
   RestoreCostEstimate,
+  ConfirmationPolicy,
+  ConfirmationTimeoutBehavior,
+  SubmitRetryOptions,
+  SubmitLifecycleEvent,
 } from '../index.js'
 
 /**
@@ -191,4 +195,13 @@ test('scan / multisig / history / TTL public types exist', () => {
   expectTypeOf<TransactionHistoryEntry>().not.toBeAny()
   expectTypeOf<LedgerEntryTTLInfo>().not.toBeAny()
   expectTypeOf<RestoreCostEstimate>().not.toBeAny()
+})
+
+test('recovery policies and lifecycle types are stable public types', () => {
+  expectTypeOf<ConfirmationPolicy>().toEqualTypeOf<
+    'wait-for-finality' | 'return-on-submission'
+  >()
+  expectTypeOf<ConfirmationTimeoutBehavior>().toEqualTypeOf<'error' | 'return-pending'>()
+  expectTypeOf<SubmitRetryOptions>().toHaveProperty('maxRetries')
+  expectTypeOf<SubmitLifecycleEvent['phase']>().toMatchTypeOf<string>()
 })

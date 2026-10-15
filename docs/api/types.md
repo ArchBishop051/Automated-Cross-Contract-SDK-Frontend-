@@ -39,6 +39,40 @@ interface SorobanResurrectConfig {
 | `archiveDetectionChunkSize` | Ledger keys per `getLedgerEntries` request during `'direct'` detection.       |
 | `archiveDetectionConcurrency` | Chunk requests kept in flight at once during `'direct'` detection.          |
 
+## `SubmitWithRestoreOptions`
+
+`submitWithRestore(options)` accepts per-request recovery controls. Retry is
+**disabled by default**; opt in only for operations where repeating an RPC call
+is acceptable:
+
+```ts
+const result = await sr.submitWithRestore({
+  transaction,
+  wallet,
+  retry: {
+    maxRetries: 3, // retries after the first attempt
+    baseDelayMs: 250,
+    maxDelayMs: 5_000,
+  },
+})
+```
+
+The SDK retries transient transport errors, HTTP 408/425/429/5xx responses,
+known temporary network failures, and Soroban's explicit `TRY_AGAIN_LATER`
+submission response. Backoff is exponential with jitter and is capped by
+`maxDelayMs`. The retry wrapper applies only to RPC calls: it never repeats
+wallet prompts, wallet rejection, invalid transaction errors, simulation
+failures, on-chain failures, or deterministic contract errors. Because a
+transport failure during submission can occur after the server accepted the
+transaction, retries resend the same signed transaction bytes rather than
+rebuilding or re-signing it.
+
+| Option | Default when `retry` is supplied | Meaning |
+| --- | ---: | --- |
+| `maxRetries` | `3` | Number of additional RPC attempts; `0` disables retries for this request. |
+| `baseDelayMs` | `250` | Initial exponential-backoff delay. |
+| `maxDelayMs` | `5000` | Maximum delay between attempts. |
+
 ## `SorobanResurrectNetwork`
 
 Describes a Soroban network: its RPC endpoint and passphrase. Use the preset

@@ -10,6 +10,7 @@ import {
   SorobanDataBuilder,
 } from '@stellar/stellar-sdk'
 import { SorobanResurrect } from '../SorobanResurrect.js'
+import { WalletError } from '../types.js'
 import type { WalletAdapter, SorobanResurrectConfig } from '../types.js'
 
 function makeSampleTx(): Transaction {
@@ -150,6 +151,49 @@ describe('SorobanResurrect.submitWithRestore — callback invocation ordering', 
       'onOriginalSubmitted',
     ])
     expect(callbacks.onRestoreFailed).not.toHaveBeenCalled()
+  })
+
+  it('opts into transient RPC retries without repeating a wallet signature', async () => {
+    vi.spyOn(resurrect.server, 'simulateTransaction')
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockResolvedValueOnce(makeSuccessResponse() as never)
+    vi.spyOn(resurrect.server, 'sendTransaction').mockResolvedValue({
+      hash: 'direct-hash',
+    } as never)
+    vi.spyOn(resurrect.server, 'getTransaction').mockResolvedValue({
+      status: rpc.Api.GetTransactionStatus.SUCCESS,
+    } as never)
+    const wallet = makeWallet()
+
+    const result = await resurrect.submitWithRestore({
+      transaction: makeSampleTx(),
+      wallet,
+      retry: { maxRetries: 1, baseDelayMs: 0, maxDelayMs: 0 },
+    })
+
+    expect(result.success).toBe(true)
+    expect(resurrect.server.simulateTransaction).toHaveBeenCalledTimes(2)
+    expect(wallet.signTransaction).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not retry wallet rejection when RPC retries are enabled', async () => {
+    vi.spyOn(resurrect.server, 'simulateTransaction').mockResolvedValue(
+      makeSuccessResponse() as never,
+    )
+    const wallet = makeWallet()
+    wallet.signTransaction = vi.fn().mockRejectedValue(
+      new WalletError('USER_REJECTED', 'Signature request declined'),
+    )
+
+    const result = await resurrect.submitWithRestore({
+      transaction: makeSampleTx(),
+      wallet,
+      retry: { maxRetries: 3, baseDelayMs: 0, maxDelayMs: 0 },
+    })
+
+    expect(result.success).toBe(false)
+    expect(result.error).toBe('Signature request declined')
+    expect(wallet.signTransaction).toHaveBeenCalledTimes(1)
   })
 
   it('invokes only onSigningOriginal then onOriginalSubmitted when no restore is needed', async () => {

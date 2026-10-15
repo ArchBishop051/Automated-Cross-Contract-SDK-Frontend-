@@ -76,6 +76,7 @@ export type ResurrectErrorCode =
    * Check `result.error` for the exception message.
    */
   | 'UNKNOWN_ERROR'
+  | 'RESTORE_FEE_CAP_EXCEEDED'
 
 /**
  * Structured error thrown by SDK methods that use exception-based error
