@@ -329,6 +329,7 @@ export class SorobanResurrectExecutor {
       transaction,
       wallet,
       config: effectiveConfig,
+      rebuildTimeBounds: options.rebuildTimeBounds,
 
       onSigningRestore: () => {
         stateMgr.setState('signing_restore', 'Awaiting wallet signature for restore transaction...')

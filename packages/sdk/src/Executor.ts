@@ -15,6 +15,7 @@ import type {
   ArchivedLedgerEntry,
   ResurrectResult,
   DryRunResult,
+  RebuildTimeBounds,
 } from './types.js'
 import { WalletError } from './types.js'
 import type { ResurrectErrorCode } from './errors.js'
@@ -72,6 +73,8 @@ export interface ExecuteParams {
   onRestoreFailed?: (error: string) => void
   /** Called when a fee-bump sponsor is about to sign a transaction. */
   onSigningFeeBump?: () => void
+  /** Absolute bounds to use when rebuilding the original transaction. */
+  rebuildTimeBounds?: RebuildTimeBounds
 }
 
 async function validateWalletNetwork(
@@ -356,6 +359,7 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
           originalTx,
           networkPassphrase,
           originalTx.fee,
+          params.rebuildTimeBounds,
         )
 
         onSigningOriginal?.()

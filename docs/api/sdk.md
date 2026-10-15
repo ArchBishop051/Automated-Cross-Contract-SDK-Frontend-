@@ -146,6 +146,32 @@ callbacks fire, none of the lifecycle callbacks in `SubmitWithRestoreOptions` ar
 invoked either. If fee estimation fails, the error is surfaced on
 `dryRunResult.simulationError` rather than thrown.
 
+### Rebuilding with transaction time bounds
+
+After a successful restore, the SDK rebuilds the original operations using a fresh
+sequence number. The rebuilt transaction preserves the original absolute
+`minTime` and `maxTime` bounds; it does not turn a nearly expired bound into a new
+relative timeout. If the original `maxTime` has elapsed before rebuilding, the
+SDK refuses to extend the user's intent.
+
+When the application has explicit authorization to replace the original expiry,
+pass new future Unix-second bounds with `rebuildTimeBounds`:
+
+```ts
+const result = await sr.submitWithRestore({
+  transaction,
+  wallet,
+  rebuildTimeBounds: {
+    minTime: Math.floor(Date.now() / 1000),
+    maxTime: Math.floor(Date.now() / 1000) + 60,
+  },
+})
+```
+
+The SDK validates that `maxTime` is a future safe integer greater than
+`minTime`. Existing transactions without time bounds retain the prior 30-second
+rebuild timeout.
+
 #### `onStateChange(listener)`
 
 ```typescript

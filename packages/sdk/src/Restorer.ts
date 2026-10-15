@@ -1,4 +1,4 @@
-import { rpc, Account, Keypair, SorobanDataBuilder } from '@stellar/stellar-sdk'
+import { rpc, Account, Keypair, SorobanDataBuilder, BASE_FEE, Memo } from '@stellar/stellar-sdk'
 import {
   TransactionBuilder,
   Operation,
@@ -6,11 +6,24 @@ import {
   xdr,
   FeeBumpTransaction,
 } from '@stellar/stellar-sdk'
-import { SorobanResurrectConfig, FeeBumpSponsor, ArchivedLedgerEntry } from './types.js'
+import {
+  SorobanResurrectConfig,
+  FeeBumpSponsor,
+  ArchivedLedgerEntry,
+  RebuildTimeBounds,
+} from './types.js'
 import type { ISorobanRpcClient } from './RpcClient.js'
 import { DEFAULT_NETWORK_PASSPHRASE } from './constants.js'
 import { calculateRestoreFee } from './feeCalculation.js'
-import { ISorobanRpcClient } from './RpcClient.js'
+import { RestoreFeeExceededError } from './errors.js'
+import {
+  asXdrBase64,
+  type SequenceNumber,
+  type StellarPublicKey,
+  type TxHash,
+  type XdrBase64,
+} from './branded-types.js'
+import { extractArchivedKeys, isRestoreResponse } from './Archiver.js'
 
 /** Parameters for building a restore transaction. */
 export interface BuildRestoreTxParams {
@@ -107,6 +120,7 @@ export async function buildRestoreTransaction(params: BuildRestoreTxParams): Pro
     config,
     account: preFetched,
     sequenceNumber,
+    memo: explicitMemo,
   } = params
 
   const networkPassphrase = config.networkPassphrase ?? DEFAULT_NETWORK_PASSPHRASE
@@ -120,16 +134,15 @@ export async function buildRestoreTransaction(params: BuildRestoreTxParams): Pro
   }
 
   const restoreFee = calculateRestoreFee(minResourceFee, config)
-  assertRestoreFeeWithinCap(restoreFee, config)
-
   if (config.maxRestoreFeeStroops !== undefined) {
     const cap = BigInt(config.maxRestoreFeeStroops)
     if (BigInt(restoreFee) > cap) {
-      throw new RestoreFeeCapExceededError(restoreFee, config.maxRestoreFeeStroops.toString())
+      throw new RestoreFeeExceededError(Number(restoreFee), Number(cap))
     }
   }
 
-  const restoreTx = new TransactionBuilder(account, {
+  const memo = resolveRestoreMemo(explicitMemo, config)
+  const builder = new TransactionBuilder(account, {
     fee: restoreFee,
     networkPassphrase,
   })
@@ -572,7 +585,7 @@ export function extractXdrOperations(tx: Transaction): xdr.Operation[] {
       // For V0 inner transaction, cast through unknown to handle type differences
       const innerV0 = innerEnvelope.value() as unknown as xdr.TransactionV0Envelope
       operations = innerV0.tx().operations()
-    } else if (innerType === xdr.EnvelopeType.envelopeTypeTx()) {
+    } else if (innerType.name === 'envelopeTypeTx') {
       const innerV1 = innerEnvelope.value() as xdr.TransactionV1Envelope
       operations = innerV1.tx().operations()
     } else {
@@ -581,9 +594,7 @@ export function extractXdrOperations(tx: Transaction): xdr.Operation[] {
       )
     }
 
-    throw new Error(
-      `Unsupported inner transaction envelope type in fee-bump transaction: ${innerType.name}`,
-    )
+    return cacheOperations(tx, operations)
   }
 
   // Handle regular V0 transactions
@@ -598,8 +609,24 @@ export function extractXdrOperations(tx: Transaction): xdr.Operation[] {
     throw new Error(`Unsupported transaction envelope type: ${envelopeType.name}`)
   }
 
+  return cacheOperations(tx, operations)
+}
+
+function cacheOperations(tx: Transaction, operations: xdr.Operation[]): xdr.Operation[] {
   parsedXdrOperationsCache.set(tx, operations)
   return operations
+}
+
+/**
+ * Parses and validates an absolute time bound represented by transaction XDR
+ * or a caller-supplied number.
+ */
+function parseTimeBound(value: string | number, name: string): number {
+  const parsed = typeof value === 'number' ? value : Number(value)
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new Error(`Invalid transaction ${name}: expected a non-negative integer Unix timestamp`)
+  }
+  return parsed
 }
 
 /**
@@ -637,23 +664,27 @@ export async function buildOriginalAfterRestore(
   originalTx: Transaction,
   networkPassphrase: string,
   fee: string,
+  rebuildTimeBounds?: RebuildTimeBounds,
 ): Promise<Transaction> {
+  const bounds = rebuildTimeBounds ?? originalTx.timeBounds
+  const now = Math.floor(Date.now() / 1000)
+  const minTime = parseTimeBound(bounds?.minTime ?? '0', 'minTime')
+  const maxTime = parseTimeBound(bounds?.maxTime ?? '0', 'maxTime')
+  if (
+    rebuildTimeBounds &&
+    (!Number.isSafeInteger(rebuildTimeBounds.maxTime) ||
+      rebuildTimeBounds.maxTime <= now ||
+      minTime >= rebuildTimeBounds.maxTime)
+  ) {
+    throw new Error('Rebuild time bounds must have a future maxTime greater than minTime')
+  }
+  if (!rebuildTimeBounds && maxTime > 0 && maxTime <= now) {
+    throw new Error('Original transaction time bounds have expired; refusing to extend them')
+  }
+
   const source = originalTx.source
   const account = await server.getAccount(source)
   const operations = extractXdrOperations(originalTx)
-
-  // Extract the original transaction's timeout
-  let timeout = 30
-  if (originalTx.timeBounds) {
-    // timeBounds.maxTime is the absolute Unix timestamp when the tx expires.
-    // Convert to relative timeout by subtracting the current time.
-    const maxTime = parseInt(originalTx.timeBounds.maxTime, 10)
-    if (maxTime > 0) {
-      // maxTime is absolute, so compute relative timeout
-      const now = Math.floor(Date.now() / 1000)
-      timeout = Math.max(1, maxTime - now)
-    }
-  }
 
   const builder = new TransactionBuilder(account, {
     fee,
@@ -664,7 +695,11 @@ export async function buildOriginalAfterRestore(
     builder.addOperation(op)
   }
 
-  builder.setTimeout(timeout)
+  if (bounds) {
+    builder.setTimebounds(minTime, maxTime)
+  } else {
+    builder.setTimeout(30)
+  }
   const rawTx = builder.build()
 
   const sim = await server.simulateTransaction(rawTx)

@@ -39,6 +39,25 @@ interface SorobanResurrectConfig {
 | `archiveDetectionChunkSize` | Ledger keys per `getLedgerEntries` request during `'direct'` detection.       |
 | `archiveDetectionConcurrency` | Chunk requests kept in flight at once during `'direct'` detection.          |
 
+## `RebuildTimeBounds`
+
+Absolute Unix-second time bounds for the transaction rebuilt after a restore.
+`maxTime` must be a safe integer later than the time at which the SDK rebuilds
+the transaction. `minTime` is optional and defaults to `0`.
+
+```typescript
+interface RebuildTimeBounds {
+  minTime?: number
+  maxTime: number
+}
+```
+
+Use `SubmitWithRestoreOptions.rebuildTimeBounds` when the caller intends to
+replace the original transaction's expiry. Otherwise the SDK preserves the
+original absolute bounds and returns an error instead of extending an expired
+transaction's intent. Transactions with no bounds retain the existing
+30-second rebuild timeout.
+
 ## `SorobanResurrectNetwork`
 
 Describes a Soroban network: its RPC endpoint and passphrase. Use the preset

@@ -35,6 +35,7 @@ export type {
   ResurrectResult,
   TxDiagnostics,
   DryRunResult,
+  RebuildTimeBounds,
   SubmitWithRestoreOptions,
   RestoreKeysOptions,
   RestoreState,
