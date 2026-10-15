@@ -281,6 +281,50 @@ describe('full restore workflow integration', () => {
     expect(callLog).not.toContain('sendTransaction:original')
   })
 
+  it('distinguishes rejection at restore signing and never submits the unsigned restore tx', async () => {
+    const server = makeIntegrationServer(callLog)
+    const wallet = makeWallet()
+    vi.mocked(wallet.signTransaction).mockRejectedValueOnce(
+      new Error('User rejected restore signing'),
+    )
+
+    const result = await executeWithRestore({
+      server,
+      transaction: makeSampleTx(),
+      wallet,
+      config: defaultConfig,
+    })
+
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('User rejected restore signing')
+    expect(wallet.signTransaction).toHaveBeenCalledTimes(1)
+    expect(server.sendTransaction).not.toHaveBeenCalled()
+    expect(callLog).not.toContain('sendTransaction:restore')
+    expect(callLog).not.toContain('sendTransaction:original')
+  })
+
+  it('distinguishes rejection at original signing and never submits the unsigned original tx', async () => {
+    const server = makeIntegrationServer(callLog)
+    const wallet = makeWallet()
+    vi.mocked(wallet.signTransaction)
+      .mockImplementationOnce(async (tx: string) => tx)
+      .mockRejectedValueOnce(new Error('User rejected original signing'))
+
+    const result = await executeWithRestore({
+      server,
+      transaction: makeSampleTx(),
+      wallet,
+      config: defaultConfig,
+    })
+
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('User rejected original signing')
+    expect(wallet.signTransaction).toHaveBeenCalledTimes(2)
+    expect(server.sendTransaction).toHaveBeenCalledTimes(1)
+    expect(callLog).toContain('sendTransaction:restore')
+    expect(callLog).not.toContain('sendTransaction:original')
+  })
+
   it('submits directly without a restore step when simulation reports no archived entries', async () => {
     const wallet = makeWallet()
     const server = {

@@ -120,6 +120,11 @@ enough to drive the entire state machine (`restore_needed` →
 `signing_original` → `submitting_original` → `success`) deterministically,
 with no network access.
 
+Wallet-rejection integration tests should cover both signing prompts
+separately: rejecting the restore signature must send neither transaction,
+while rejecting the rebuilt original signature may send the confirmed restore
+transaction but must never send the unsigned original transaction.
+
 ## Free functions
 
 Lower-level functions such as `executeWithRestore`, `waitForTransaction`, and
