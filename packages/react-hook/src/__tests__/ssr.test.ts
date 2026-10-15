@@ -2,6 +2,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { createElement } from 'react'
 import { renderToString } from 'react-dom/server'
+import { SorobanResurrect } from '@soroban-resurrect/sdk'
 
 // The SDK is mocked so this test isolates the hook package's own module scope.
 vi.mock('@soroban-resurrect/sdk', () => ({
@@ -42,6 +43,6 @@ describe('SSR safety (@soroban-resurrect/react-hook)', () => {
     )
 
     expect(html).toContain('server-rendered')
-    expect(vi.mocked((await import('@soroban-resurrect/sdk')).SorobanResurrect)).not.toHaveBeenCalled()
+    expect(vi.mocked(SorobanResurrect)).not.toHaveBeenCalled()
   })
 })
