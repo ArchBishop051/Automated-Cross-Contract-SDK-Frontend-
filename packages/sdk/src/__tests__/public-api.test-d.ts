@@ -160,6 +160,9 @@ test('SorobanResurrectConfig and result types keep their shape', () => {
 
   expectTypeOf<FeeBumpSponsor>().toHaveProperty('signFeeBump')
   expectTypeOf<DryRunResult>().toHaveProperty('wouldNeedRestore')
+  expectTypeOf<DryRunResult>().toHaveProperty('intendedOperations')
+  expectTypeOf<SubmitWithRestoreOptions>().toHaveProperty('dryRun')
+  expectTypeOf<InstanceType<typeof sdk.SorobanResurrect>>().toHaveProperty('previewRestore')
   expectTypeOf<RebuildTimeBounds>().toHaveProperty('maxTime')
   expectTypeOf<SubmitWithRestoreOptions>().toHaveProperty('rebuildTimeBounds')
   expectTypeOf<TxDiagnostics>().toHaveProperty('events')

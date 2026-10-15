@@ -71,13 +71,18 @@ export class SorobanResurrectSimulator {
    * @param transaction - The transaction to simulate.
    * @returns The raw simulation response (success, error, or restore-required).
    */
-  async simulate(transaction: Transaction): Promise<rpc.Api.SimulateTransactionResponse> {
+  async simulate(
+    transaction: Transaction,
+    options: { updateState?: boolean } = {},
+  ): Promise<rpc.Api.SimulateTransactionResponse> {
     if (this._cache) {
       const cached = this._cache.get(transaction)
       if (cached) return cached
     }
 
-    this._stateMgr.setState('simulating', 'Simulating transaction...')
+    if (options.updateState !== false) {
+      this._stateMgr.setState('simulating', 'Simulating transaction...')
+    }
 
     const response = await this._server.simulateTransaction(transaction)
 

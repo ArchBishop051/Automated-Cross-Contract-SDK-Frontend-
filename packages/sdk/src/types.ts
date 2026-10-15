@@ -469,6 +469,8 @@ export interface RestoreKeysOptions {
 export interface DryRunResult {
   /** Whether the transaction would require a restore before submission. */
   wouldNeedRestore: boolean
+  /** Operation type names, in the order they appear in the original transaction. */
+  intendedOperations: string[]
   /** Number of archived ledger entries detected. */
   archivedKeysDetected: number
   /** The archived ledger entries that would need to be restored. */
@@ -477,6 +479,8 @@ export interface DryRunResult {
   estimatedRestoreFee?: FeeStroops
   /** Simulation error message, if simulation itself failed. */
   simulationError?: string
+  /** Typed guidance when simulation could not complete. */
+  failure?: ResurrectFailure
 }
 
 /** Storage contract accepted by transaction-history persistence. */
@@ -514,6 +518,12 @@ export interface SubmitWithRestoreOptions {
   transaction: Transaction
   /** Wallet adapter used for signing. */
   wallet: WalletAdapter
+  /**
+   * Simulate and return a preview without signing, submitting, or recording
+   * history. Use {@link SorobanResurrect.previewRestore} when no wallet is
+   * available.
+   */
+  dryRun?: boolean
   /**
    * Optional fee-bump configuration. When provided, transactions are wrapped
    * in fee-bump envelopes so the sponsor pays fees on behalf of the user.

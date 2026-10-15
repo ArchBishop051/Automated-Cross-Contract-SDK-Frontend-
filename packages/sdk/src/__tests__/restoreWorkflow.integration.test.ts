@@ -171,6 +171,7 @@ describe('full restore workflow integration', () => {
       originalTxHash: 'original-tx-hash',
       restoreTxHash: 'restore-tx-hash',
       archivedKeysDetected: 1,
+      sequenceRetries: 0,
     })
 
     // RPC calls happen in the expected end-to-end order: simulate -> account
@@ -220,10 +221,10 @@ describe('full restore workflow integration', () => {
   it('propagates every workflow state transition through the SorobanResurrect facade', async () => {
     const server = makeIntegrationServer(callLog)
     const wallet = makeWallet()
-    const resurrect = new SorobanResurrect(defaultConfig)
-    // Swap in the mocked RPC server so the full real workflow runs against
-    // a realistic, controlled sequence of responses instead of the network.
-    ;(resurrect as unknown as { server: rpc.Server }).server = server
+    const resurrect = new SorobanResurrect({
+      ...defaultConfig,
+      rpcClient: server,
+    })
 
     const states: RestoreStateInfo[] = []
     resurrect.onStateChange((info) => states.push({ ...info }))
@@ -249,6 +250,87 @@ describe('full restore workflow integration', () => {
 
     expect(resurrect.state).toBe('success')
     expect(resurrect.stateInfo.error).toBeUndefined()
+  })
+
+  it('previews archived entries, fee, and operation types without a wallet or submission', async () => {
+    const server = makeIntegrationServer(callLog)
+    const resurrect = new SorobanResurrect({
+      ...defaultConfig,
+      rpcClient: server,
+    })
+
+    const preview = await resurrect.previewRestore(makeSampleTx())
+
+    expect(preview).toMatchObject({
+      wouldNeedRestore: true,
+      archivedKeysDetected: 1,
+      estimatedRestoreFee: '300',
+      intendedOperations: ['restoreFootprint'],
+    })
+    expect(preview.archivedKeys[0]).toMatchObject({
+      keyBase64: 'archived-key-base64',
+    })
+    expect(server.simulateTransaction).toHaveBeenCalledTimes(1)
+    expect(server.sendTransaction).not.toHaveBeenCalled()
+    expect(server.getAccount).not.toHaveBeenCalled()
+    expect(callLog).toEqual(['simulateTransaction'])
+    expect(resurrect.state).toBe('idle')
+  })
+
+  it('returns simulation errors from a preview without submitting', async () => {
+    const server = {
+      simulateTransaction: vi.fn().mockResolvedValue({
+        error: 'simulation rejected',
+      } as never),
+      getAccount: vi.fn(),
+      sendTransaction: vi.fn(),
+      getTransaction: vi.fn(),
+      getLedgerEntries: vi.fn(),
+    } as unknown as rpc.Server
+    const resurrect = new SorobanResurrect({
+      ...defaultConfig,
+      rpcClient: server,
+    })
+
+    const preview = await resurrect.previewRestore(makeSampleTx())
+
+    expect(preview.simulationError).toBe('simulation rejected')
+    expect(preview.failure).toMatchObject({
+      stage: 'simulation',
+      code: 'SIMULATION_FAILED',
+    })
+    expect(server.sendTransaction).not.toHaveBeenCalled()
+  })
+
+  it('supports dry-run submit options without signing, submitting, or recording history', async () => {
+    const server = makeIntegrationServer(callLog)
+    const wallet = makeWallet()
+    const resurrect = new SorobanResurrect({
+      ...defaultConfig,
+      rpcClient: server,
+    })
+
+    const result = await resurrect.submitWithRestore({
+      transaction: makeSampleTx(),
+      wallet,
+      dryRun: true,
+    })
+
+    expect(result).toMatchObject({
+      success: true,
+      dryRun: true,
+      dryRunResult: {
+        wouldNeedRestore: true,
+        archivedKeysDetected: 1,
+        estimatedRestoreFee: '300',
+        intendedOperations: ['restoreFootprint'],
+      },
+    })
+    expect(result.historyId).toBeUndefined()
+    expect(wallet.signTransaction).not.toHaveBeenCalled()
+    expect(server.sendTransaction).not.toHaveBeenCalled()
+    expect(server.getAccount).not.toHaveBeenCalled()
+    expect(callLog).toEqual(['simulateTransaction'])
   })
 
   it('stops the workflow and never submits the original tx if the restore transaction fails to confirm', async () => {

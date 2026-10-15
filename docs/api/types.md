@@ -58,6 +58,25 @@ original absolute bounds and returns an error instead of extending an expired
 transaction's intent. Transactions with no bounds retain the existing
 30-second rebuild timeout.
 
+## `DryRunResult`
+
+Returned by `SorobanResurrect.previewRestore()` and by
+`submitWithRestore({ dryRun: true })`. The preview simulates the transaction
+without signing or submitting it and includes operation type names in their
+original order.
+
+```typescript
+interface DryRunResult {
+  wouldNeedRestore: boolean
+  intendedOperations: string[]
+  archivedKeysDetected: number
+  archivedKeys: ArchivedLedgerEntry[]
+  estimatedRestoreFee?: FeeStroops
+  simulationError?: string
+  failure?: ResurrectFailure
+}
+```
+
 ## `ResurrectFailure`
 
 Failure results may include `failure` in addition to the existing readable

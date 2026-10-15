@@ -1,8 +1,10 @@
-import { rpc, Transaction, TransactionBuilder } from '@stellar/stellar-sdk'
-import {
+import { rpc, Transaction, TransactionBuilder, xdr } from '@stellar/stellar-sdk'
+import type {
   ArchivedLedgerEntry,
+  DryRunResult,
   ResurrectResult,
   RestoreKeysOptions,
+  SorobanResurrectConfig,
   SubmitWithRestoreOptions,
   WalletAdapter,
 } from './types.js'
@@ -13,16 +15,22 @@ import {
   buildBatchRestoreTransaction,
   buildOriginalAfterRestore,
   waitForTransaction,
+  extractXdrOperations,
 } from './Restorer.js'
-import { isRestoreResponse } from './Archiver.js'
+import {
+  isRestoreResponse,
+  isErrorResponse,
+  isSuccessResponse,
+  extractArchivedKeys,
+} from './Archiver.js'
 import { TransactionHistory, TransactionHistoryEntry } from './TransactionHistory.js'
 import { attachHistoryPersistence, type HistoryPersistenceHandle } from './HistoryPersistence.js'
 import type { HistoryPersistenceOptions } from './types.js'
 import { SorobanResurrectStateManager } from './SorobanResurrectState.js'
 import { SorobanResurrectSimulator } from './SorobanResurrectSimulation.js'
-import type { ISorobanRpcClient } from './RpcClient.js'
-import { asTxHash, asHistoryEntryId } from './branded-types.js'
+import { asFeeStroops, asTxHash, asHistoryEntryId } from './branded-types.js'
 import { createFailureGuidance } from './FailureGuidance.js'
+import { calculateRestoreFee } from './feeCalculation.js'
 
 /**
  * Handles all transaction execution concerns for a `SorobanResurrect` instance:
@@ -78,6 +86,82 @@ export class SorobanResurrectExecutor {
    */
   get historyHydrated(): Promise<void> {
     return this._historyPersistence?.hydrated ?? Promise.resolve()
+  }
+
+  /**
+   * Simulates a transaction and returns restore requirements, fee estimate,
+   * and operation types without accessing a wallet or submitting a transaction.
+   */
+  async previewRestore(transaction: Transaction): Promise<DryRunResult> {
+    const intendedOperations = extractXdrOperations(transaction).map(
+      (operation) => operation.body().switch().name,
+    )
+
+    let response: rpc.Api.SimulateTransactionResponse
+    try {
+      response = await this._simulator.simulate(transaction, { updateState: false })
+    } catch (error) {
+      const simulationError = error instanceof Error ? error.message : String(error)
+      return {
+        wouldNeedRestore: false,
+        intendedOperations,
+        archivedKeysDetected: 0,
+        archivedKeys: [],
+        simulationError,
+        failure: createFailureGuidance('SIMULATION_FAILED'),
+      }
+    }
+
+    if (isErrorResponse(response)) {
+      return {
+        wouldNeedRestore: false,
+        intendedOperations,
+        archivedKeysDetected: 0,
+        archivedKeys: [],
+        simulationError: response.error,
+        failure: createFailureGuidance('SIMULATION_FAILED'),
+      }
+    }
+
+    if (isRestoreResponse(response)) {
+      const archivedKeys = extractArchivedKeys(response)
+      const minResourceFee = Number(response.minResourceFee)
+      if (!Number.isSafeInteger(minResourceFee) || minResourceFee < 0) {
+        return {
+          wouldNeedRestore: true,
+          intendedOperations,
+          archivedKeysDetected: archivedKeys.length,
+          archivedKeys,
+          simulationError: 'Simulation returned an invalid minimum resource fee',
+          failure: createFailureGuidance('SIMULATION_FAILED'),
+        }
+      }
+      return {
+        wouldNeedRestore: true,
+        intendedOperations,
+        archivedKeysDetected: archivedKeys.length,
+        archivedKeys,
+        estimatedRestoreFee: asFeeStroops(calculateRestoreFee(minResourceFee, this._config)),
+      }
+    }
+
+    if (isSuccessResponse(response)) {
+      return {
+        wouldNeedRestore: false,
+        intendedOperations,
+        archivedKeysDetected: 0,
+        archivedKeys: [],
+      }
+    }
+
+    return {
+      wouldNeedRestore: false,
+      intendedOperations,
+      archivedKeysDetected: 0,
+      archivedKeys: [],
+      simulationError: 'Simulation returned an unrecognized response',
+      failure: createFailureGuidance('UNEXPECTED_SIMULATION_RESPONSE'),
+    }
   }
 
   /**
@@ -310,6 +394,24 @@ export class SorobanResurrectExecutor {
       onOriginalSubmitted,
       onRestoreFailed,
     } = options
+
+    if (options.dryRun) {
+      const dryRunResult = await this.previewRestore(transaction)
+      const simulationError = dryRunResult.simulationError
+      return {
+        success: simulationError === undefined,
+        dryRun: true,
+        dryRunResult,
+        archivedKeysDetected: dryRunResult.archivedKeysDetected,
+        ...(simulationError
+          ? {
+              error: simulationError,
+              errorCode: dryRunResult.failure?.code ?? 'SIMULATION_FAILED',
+              failure: dryRunResult.failure ?? createFailureGuidance('SIMULATION_FAILED'),
+            }
+          : {}),
+      }
+    }
 
     const historyId = this._history.add(transaction)
     const stateMgr = this._stateMgr

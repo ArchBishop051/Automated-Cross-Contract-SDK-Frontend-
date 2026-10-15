@@ -127,24 +127,24 @@ Submits a transaction with automatic archive restoration. If the simulation dete
 
 ##### Dry-run mode
 
-Pass `dryRun: true` to preview a restore without signing or submitting anything:
+Call `previewRestore` for a walletless preview, or pass `dryRun: true` to
+`submitWithRestore` when using the same options shape as a normal submission:
 
 ```typescript
-const result = await sr.submitWithRestore({ transaction, wallet, dryRun: true })
+const preview = await sr.previewRestore(transaction)
+console.log(preview.intendedOperations)
+console.log(preview.archivedKeys)
+console.log(preview.estimatedRestoreFee)
 
-if (result.dryRun) {
-  console.log(result.dryRunResult?.archivedKeys)
-  console.log(result.dryRunResult?.estimatedRestoreFee)
-}
+const result = await sr.submitWithRestore({ transaction, wallet, dryRun: true })
 ```
 
-In dry-run mode the SDK runs archive detection plus fee estimation and returns
-`{ success: true, dryRun: true, dryRunResult }`. It performs **zero wallet calls**
-(no `signTransaction`, no `signAuthEntry`) and **zero submissions** (no
-`sendTransaction`), and it does not record anything to history. Because no wallet
-callbacks fire, none of the lifecycle callbacks in `SubmitWithRestoreOptions` are
-invoked either. If fee estimation fails, the error is surfaced on
-`dryRunResult.simulationError` rather than thrown.
+Both paths simulate only and return the ordered operation type names, detected
+archived ledger entries, and estimated restore fee when needed. Neither path
+signs or submits; `previewRestore` does not require a wallet. The `dryRun`
+option also does not record history or invoke lifecycle callbacks. Simulation
+failures are returned in `simulationError` (and typed `failure` guidance), not
+silently treated as a successful preview.
 
 ### Rebuilding with transaction time bounds
 
