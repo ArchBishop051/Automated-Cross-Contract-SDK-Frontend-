@@ -4,8 +4,9 @@
 
 Creates and manages a `SorobanResurrect` instance scoped to the calling
 component. Accepts a ref, getter, or plain `SorobanResurrectConfig`; recreates
-the SDK when the config changes and cleans up on unmount. This path is
-unchanged — use it when a component needs its own instance.
+the SDK when the config changes and disposes the instance and SDK subscriptions
+when the active Vue effect scope ends. It also works in a manually-created
+`effectScope()`. Use it when a component needs its own instance.
 
 ```ts
 const { state, isProcessing, submitWithRestore, reset } = useSorobanResurrect(config)
@@ -15,7 +16,17 @@ const { state, isProcessing, submitWithRestore, reset } = useSorobanResurrect(co
 
 Install the plugin to construct **one** `SorobanResurrect` instance and provide
 it to the whole app, so components consume it with `injectSorobanResurrect()` —
-no manual `provide` / `inject` wiring.
+no manual `provide` / `inject` wiring. The instance is disposed when the app is
+unmounted.
+
+Composables that receive an existing `resurrect` instance do not take ownership
+of it. When given `config`, they create and dispose their own instance as the
+effect scope changes or ends. Watcher polling intervals and pending poll
+results are also stopped with that scope. `on()` returns an unsubscribe
+function, and any subscriptions not manually removed are automatically
+unsubscribed when the scope ends. `useSorobanResurrectWatcher` auto-starts on
+component mount; when used in a manually-created effect scope, call `start()`
+explicitly.
 
 ```ts
 import { createApp } from 'vue'
