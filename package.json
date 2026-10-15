@@ -28,6 +28,7 @@
     "format": "prettier --check \"**/*.{ts,tsx,json,md}\" --ignore-path .gitignore",
     "format:fix": "prettier --write \"**/*.{ts,tsx,json,md}\" --ignore-path .gitignore",
     "test": "turbo run test --filter=\"./packages/*\"",
+    "test:packed-exports": "node scripts/test-packed-exports.mjs",
     "test:watch": "npm run test:watch -w packages/sdk",
     "clean": "turbo run clean --filter=\"./packages/*\"",
     "prepare": "husky"
