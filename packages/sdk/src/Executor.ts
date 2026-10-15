@@ -16,7 +16,6 @@ import type {
   ResurrectResult,
   DryRunResult,
 } from './types.js'
-import { WalletError } from './types.js'
 import type { ResurrectErrorCode } from './errors.js'
 import {
   isRestoreResponse,
@@ -43,6 +42,12 @@ import {
 } from './constants.js'
 import { asTxHash, asXdrBase64, type TxHash, type XdrBase64 } from './branded-types.js'
 import { parseTransactionFailure } from './TransactionFailure.js'
+import { ensureAddressAuthorization } from './Authorization.js'
+import { signAndVerifyTransaction } from './signedTransaction.js'
+import { configForWalletRestore } from './memoValidation.js'
+import { assertBatchSize } from './batchLimits.js'
+import { ResurrectError } from './errors.js'
+import { assertWalletCapability } from './walletCapabilities.js'
 
 /** Parameters for the full restore-and-submit execution flow. */
 export interface ExecuteParams {
@@ -89,7 +94,11 @@ async function validateWalletNetwork(
 }
 
 function walletErrorMessage(error: unknown): string {
-  if (error instanceof WalletError && error.code === 'USER_REJECTED') {
+  if (
+    error instanceof Error &&
+    'code' in error &&
+    error.code === 'USER_REJECTED'
+  ) {
     return 'Signature request declined'
   }
   return error instanceof Error ? error.message : String(error)
@@ -109,6 +118,7 @@ async function signAndMaybeFeeBump(params: {
   wallet: WalletAdapter
   feeBumpConfig?: FeeBumpConfig
   networkPassphrase: string
+  config: Pick<SorobanResurrectConfig, 'logger'>
   server: ISorobanRpcClient
   onSigning?: () => void
   onSigningFeeBump?: () => void
@@ -119,6 +129,7 @@ async function signAndMaybeFeeBump(params: {
     wallet,
     feeBumpConfig,
     networkPassphrase,
+    config,
     server,
     onSigning,
     onSigningFeeBump,
@@ -132,14 +143,10 @@ async function signAndMaybeFeeBump(params: {
   }
 
   onSigning?.()
-  const signedXdr = await wallet.signTransaction(asXdrBase64(tx.toXDR()), { networkPassphrase })
+  const signedTx = await signAndVerifyTransaction(tx, wallet, networkPassphrase, config)
 
   // If no fee-bump, submit directly
   if (!feeBumpConfig) {
-    const signedTx = TransactionBuilder.fromXDR(signedXdr, networkPassphrase)
-    if (!(signedTx instanceof Transaction)) {
-      throw new Error('Failed to parse signed transaction')
-    }
     onSubmitting?.()
     const result = await server.sendTransaction(signedTx)
     return { hash: asTxHash(result.hash) }
@@ -148,7 +155,7 @@ async function signAndMaybeFeeBump(params: {
   // Fee-bump flow: wrap the signed inner tx in a fee-bump
   onSigningFeeBump?.()
   const feeBumpXdr = await buildFeeBumpTransaction(
-    signedXdr,
+    asXdrBase64(signedTx.toXDR()),
     feeBumpConfig.sponsor,
     networkPassphrase,
     feeBumpConfig.feeBumpFee,
@@ -294,7 +301,7 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
         sourcePublicKey: publicKey,
         transactionData: simResponse.transactionData.build(),
         minResourceFee: parseInt(simResponse.minResourceFee, 10),
-        config,
+        config: configForWalletRestore(config, wallet),
         account,
       })
 
@@ -302,21 +309,12 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
       onRestoreNeeded?.(archivedKeys)
 
       onSigningRestore?.()
-      const signedRestoreXdr = await wallet.signTransaction(asXdrBase64(restoreTx.toXDR()), {
+      const signedRestoreTx = await signAndVerifyTransaction(
+        restoreTx,
+        wallet,
         networkPassphrase,
-      })
-
-      const signedRestoreTx = TransactionBuilder.fromXDR(signedRestoreXdr, networkPassphrase)
-      if (!(signedRestoreTx instanceof Transaction)) {
-        const err = 'Failed to parse signed restore transaction'
-        onRestoreFailed?.(err)
-        return {
-          success: false,
-          archivedKeysDetected: archivedKeys.length,
-          error: err,
-          errorCode: 'RESTORE_TX_PARSE_FAILED',
-        }
-      }
+        config,
+      )
 
       onSubmittingRestore?.()
       const restoreResult = await server.sendTransaction(signedRestoreTx)
@@ -359,22 +357,12 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
         )
 
         onSigningOriginal?.()
-        const signedOriginalXdr = await wallet.signTransaction(asXdrBase64(preparedTx.toXDR()), {
+        const signedOriginalTx = await signAndVerifyTransaction(
+          preparedTx,
+          wallet,
           networkPassphrase,
-        })
-
-        const signedOriginalTx = TransactionBuilder.fromXDR(signedOriginalXdr, networkPassphrase)
-        if (!(signedOriginalTx instanceof Transaction)) {
-          const err = 'Failed to parse signed original transaction'
-          onRestoreFailed?.(err)
-          return {
-            success: false,
-            archivedKeysDetected: archivedKeys.length,
-            restoreTxHash: restoreHash,
-            error: err,
-            sequenceRetries,
-          }
-        }
+          config,
+        )
 
         originalResult = await server.sendTransaction(signedOriginalTx)
 
@@ -395,9 +383,6 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
           error: err,
           sequenceRetries,
         }
-
-        originalHash = asTxHash(originalResult.hash)
-        break
       }
 
       const originalHash = asTxHash(originalResult!.hash)
@@ -409,16 +394,6 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
         restoreTxHash: restoreHash,
         archivedKeysDetected: archivedKeys.length,
         sequenceRetries,
-      }
-
-      const originalResult = await server.sendTransaction(signedOriginalTx)
-      onOriginalSubmitted?.(originalResult.hash)
-
-      return {
-        success: true,
-        originalTxHash: originalResult.hash,
-        restoreTxHash: restoreResult.hash,
-        archivedKeysDetected: archivedKeys.length,
       }
     }
 
@@ -440,6 +415,7 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
         wallet,
         feeBumpConfig,
         networkPassphrase,
+        config,
         server,
         onSigning: onSigningOriginal,
         onSigningFeeBump,
@@ -477,7 +453,12 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
   } catch (err) {
     const message = walletErrorMessage(err)
     onRestoreFailed?.(message)
-    return { success: false, archivedKeysDetected: 0, error: message, errorCode: 'UNKNOWN_ERROR' }
+    return {
+      success: false,
+      archivedKeysDetected: 0,
+      error: message,
+      errorCode: err instanceof ResurrectError ? err.code : 'UNKNOWN_ERROR',
+    }
   }
 }
 
@@ -508,19 +489,12 @@ export async function sendTransaction(
     }
 
     await validateWalletNetwork(wallet, networkPassphrase)
-    const signedXdr = await wallet.signTransaction(asXdrBase64(transaction.toXDR()), {
+    const signedTx = await signAndVerifyTransaction(
+      transaction,
+      wallet,
       networkPassphrase,
-    })
-
-    const signedTx = TransactionBuilder.fromXDR(signedXdr, networkPassphrase)
-    if (!(signedTx instanceof Transaction)) {
-      return {
-        success: false,
-        archivedKeysDetected: 0,
-        error: 'Failed to parse signed transaction',
-        errorCode: 'ORIGINAL_TX_PARSE_FAILED' as const,
-      }
-    }
+      config,
+    )
 
     const result = await server.sendTransaction(signedTx)
 
@@ -535,7 +509,7 @@ export async function sendTransaction(
       success: false,
       archivedKeysDetected: 0,
       error: message,
-      errorCode: 'UNKNOWN_ERROR' as const,
+      errorCode: err instanceof ResurrectError ? err.code : 'UNKNOWN_ERROR',
     }
   }
 }
@@ -624,6 +598,7 @@ export interface RestoreKeysParams {
 export async function restoreKeys(params: RestoreKeysParams): Promise<ResurrectResult> {
   const { server, keys, wallet, config } = params
   const networkPassphrase = config.networkPassphrase ?? DEFAULT_NETWORK_PASSPHRASE
+  assertBatchSize(keys.length, config.maxBatchSize ?? 100, 'restoreKeys')
 
   if (keys.length === 0) {
     return {
@@ -672,21 +647,16 @@ export async function restoreKeys(params: RestoreKeysParams): Promise<ResurrectR
       sourcePublicKey: publicKey,
       transactionData,
       minResourceFee,
-      config,
+      config: configForWalletRestore(config, wallet),
       account,
     })
 
-    const signedXdr = await wallet.signTransaction(asXdrBase64(restoreTx.toXDR()), {
+    const signedTx = await signAndVerifyTransaction(
+      restoreTx,
+      wallet,
       networkPassphrase,
-    })
-    const signedTx = TransactionBuilder.fromXDR(signedXdr, networkPassphrase)
-    if (!(signedTx instanceof Transaction)) {
-      return {
-        success: false,
-        archivedKeysDetected: keys.length,
-        error: 'Failed to parse signed restore transaction',
-      }
-    }
+      config,
+    )
 
     const sendResult = await server.sendTransaction(signedTx)
     if (isTxBadSeqError(sendResult)) {
@@ -715,6 +685,11 @@ export async function restoreKeys(params: RestoreKeysParams): Promise<ResurrectR
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    return { success: false, archivedKeysDetected: keys.length, error: message }
+    return {
+      success: false,
+      archivedKeysDetected: keys.length,
+      error: message,
+      ...(err instanceof ResurrectError ? { errorCode: err.code } : {}),
+    }
   }
 }

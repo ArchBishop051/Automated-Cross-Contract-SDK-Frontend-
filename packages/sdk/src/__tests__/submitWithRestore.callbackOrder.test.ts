@@ -5,6 +5,7 @@ import {
   Account,
   Networks,
   Operation,
+  Asset,
   Keypair,
   Transaction,
   SorobanDataBuilder,
@@ -116,6 +117,72 @@ describe('SorobanResurrect.submitWithRestore — callback invocation ordering', 
   beforeEach(() => {
     resurrect = new SorobanResurrect(testConfig)
   })
+
+  it('validates per-call restore memo overrides before archive detection', async () => {
+    const simulate = vi.spyOn(resurrect.server, 'simulateTransaction')
+
+    await expect(
+      resurrect.submitWithRestore({
+        transaction: makeSampleTx(),
+        wallet: makeWallet(),
+        restoreTxMemoText: 'a'.repeat(29),
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_RESTORE_MEMO' })
+
+    expect(simulate).not.toHaveBeenCalled()
+  })
+
+  it.each(['fee-bump', 'mutated operations'])(
+    'does not submit a wallet response containing %s',
+    async (responseKind) => {
+      const transaction = makeSampleTx()
+      const wallet = makeWallet()
+      const simulate = vi
+        .spyOn(resurrect.server, 'simulateTransaction')
+        .mockResolvedValue(makeRestoreResponse() as never)
+      const send = vi.spyOn(resurrect.server, 'sendTransaction')
+      vi.spyOn(resurrect.server, 'getAccount').mockImplementation(async () => {
+        return new Account(await wallet.getPublicKey(), '2') as never
+      })
+
+      wallet.signTransaction = vi.fn().mockImplementation(async (xdr: string) => {
+        const unsigned = TransactionBuilder.fromXDR(xdr, Networks.TESTNET) as Transaction
+        const response =
+          responseKind === 'fee-bump'
+            ? TransactionBuilder.buildFeeBumpTransaction(
+              Keypair.random().publicKey(),
+              '1000',
+              unsigned,
+              Networks.TESTNET,
+            )
+            : new TransactionBuilder(
+                new Account(unsigned.source, unsigned.sequence),
+                { fee: unsigned.fee, networkPassphrase: Networks.TESTNET },
+              )
+                .addOperation(
+                  Operation.payment({
+                    destination: Keypair.random().publicKey(),
+                    asset: Asset.native(),
+                    amount: '1',
+                  }),
+                )
+                .setTimeout(30)
+                .build()
+        return response.toXDR()
+      })
+
+      const result = await resurrect.submitWithRestore({ transaction, wallet })
+
+      expect(result.success).toBe(false)
+      expect(result.errorCode).toBe(
+        responseKind === 'fee-bump'
+          ? 'UNEXPECTED_FEE_BUMP_ENVELOPE'
+          : 'SIGNED_TRANSACTION_MISMATCH',
+      )
+      expect(send).not.toHaveBeenCalled()
+      expect(simulate).toHaveBeenCalledOnce()
+    },
+  )
 
   it('invokes callbacks in the documented order for the full restore-then-submit flow', async () => {
     vi.spyOn(resurrect.server, 'simulateTransaction')
@@ -300,7 +367,8 @@ describe('SorobanResurrect.submitWithRestore — callback invocation ordering', 
     })
 
     expect(result.success).toBe(false)
-    expect(result.error).toBe('Failed to parse signed original transaction')
+    expect(result.errorCode).toBe('UNEXPECTED_FEE_BUMP_ENVELOPE')
+    expect(result.error).toContain('fee-bump envelope')
     expect(order).toEqual([
       'onRestoreNeeded',
       'onSigningRestore',
