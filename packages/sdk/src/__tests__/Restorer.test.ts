@@ -15,6 +15,7 @@ import {
   waitForTransaction,
   buildRestoreTransaction,
   buildOriginalAfterRestore,
+  getExpiredTransactionInfo,
 } from '../Restorer.js'
 
 function makeSampleTx(): Transaction {
@@ -292,8 +293,26 @@ describe('Restorer', () => {
 
       await expect(
         buildOriginalAfterRestore(server, originalTx, Networks.TESTNET, '100'),
-      ).rejects.toThrow('Original transaction time bounds have expired')
+      ).rejects.toMatchObject({
+        code: 'ORIGINAL_TRANSACTION_EXPIRED',
+        expiredTransaction: {
+          originalTimeBounds: {
+            minTime: 0,
+            maxTime: now - 1,
+          },
+        },
+      })
       expect(server.simulateTransaction).not.toHaveBeenCalled()
+    })
+
+    it('treats maxTime equality as expired and the preceding second as valid', () => {
+      const originalTx = makeTimeBoundTx(10, 100)
+
+      expect(getExpiredTransactionInfo(originalTx, 99)).toBeUndefined()
+      expect(getExpiredTransactionInfo(originalTx, 100)).toEqual({
+        originalTimeBounds: { minTime: 10, maxTime: 100 },
+        detectedAt: 100,
+      })
     })
 
     it('accepts valid caller-supplied future bounds and rejects an expired override', async () => {
@@ -323,7 +342,7 @@ describe('Restorer', () => {
           '100',
           { minTime: now, maxTime: now },
         ),
-      ).rejects.toThrow('Rebuild time bounds must have a future maxTime')
+      ).rejects.toMatchObject({ code: 'INVALID_REBUILD_TIME_BOUNDS' })
     })
   })
 })

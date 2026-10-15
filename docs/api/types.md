@@ -50,13 +50,41 @@ interface RebuildTimeBounds {
   minTime?: number
   maxTime: number
 }
+
+interface SubmitWithRestoreOptions {
+  rebuildTimeBounds?: RebuildTimeBounds
+  approveExpiredRebuild?: (
+    expiredTransaction: ExpiredTransactionInfo,
+  ) => RebuildTimeBounds | undefined | Promise<RebuildTimeBounds | undefined>
+}
 ```
 
-Use `SubmitWithRestoreOptions.rebuildTimeBounds` when the caller intends to
-replace the original transaction's expiry. Otherwise the SDK preserves the
-original absolute bounds and returns an error instead of extending an expired
-transaction's intent. Transactions with no bounds retain the existing
-30-second rebuild timeout.
+Use `rebuildTimeBounds` to set bounds while the original transaction is still
+valid. If it expires during restore, the SDK requires `approveExpiredRebuild`
+to return replacement bounds; otherwise the SDK returns a typed outcome rather
+than extending the transaction's intent. Transactions with no bounds retain
+the existing 30-second rebuild timeout.
+
+If the original expires during restore, the result uses
+`ORIGINAL_TRANSACTION_EXPIRED` and includes `expiredTransaction`. To continue
+the same workflow, `SubmitWithRestoreOptions.approveExpiredRebuild` must return
+new future bounds; returning `undefined` or omitting it stops before the
+original transaction is signed or submitted.
+
+## `ExpiredTransactionInfo`
+
+Describes the original finite bounds and the Unix-second time at which expiry
+was detected.
+
+```typescript
+interface ExpiredTransactionInfo {
+  originalTimeBounds: {
+    minTime: number
+    maxTime: number
+  }
+  detectedAt: number
+}
+```
 
 ## `DryRunResult`
 

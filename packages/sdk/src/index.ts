@@ -38,6 +38,7 @@ export type {
   TxDiagnostics,
   DryRunResult,
   RebuildTimeBounds,
+  ExpiredTransactionInfo,
   SubmitWithRestoreOptions,
   RestoreKeysOptions,
   RestoreState,
@@ -57,7 +58,11 @@ export type {
 } from './types.js'
 export type { WalletErrorCode } from './types.js'
 export { WalletError } from './types.js'
-export { ResurrectError, RestoreFeeExceededError } from './errors.js'
+export {
+  ResurrectError,
+  OriginalTransactionExpiredError,
+  RestoreFeeExceededError,
+} from './errors.js'
 
 // ---------------------------------------------------------------------------
 // RPC abstraction layer (dependency injection / testing — see RpcClient.ts)

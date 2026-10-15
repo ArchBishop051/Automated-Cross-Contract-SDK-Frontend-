@@ -16,10 +16,14 @@ import type {
   ResurrectResult,
   DryRunResult,
   RebuildTimeBounds,
+  ExpiredTransactionInfo,
 } from './types.js'
 import { WalletError } from './types.js'
 import type { ResurrectErrorCode } from './errors.js'
-import { ResurrectError } from './errors.js'
+import {
+  OriginalTransactionExpiredError,
+  ResurrectError,
+} from './errors.js'
 import {
   isRestoreResponse,
   isSuccessResponse,
@@ -35,6 +39,7 @@ import {
   buildFeeBumpTransaction,
   submitFeeBumpTransaction,
   isTxBadSeqError,
+  getExpiredTransactionInfo,
 } from './Restorer.js'
 import { SimulationCache } from './SimulationCache.js'
 import {
@@ -79,6 +84,10 @@ export interface ExecuteParams {
   onSigningFeeBump?: () => void
   /** Absolute bounds to use when rebuilding the original transaction. */
   rebuildTimeBounds?: RebuildTimeBounds
+  /** Caller approval and replacement bounds when the original expires during restore. */
+  approveExpiredRebuild?: (
+    expiredTransaction: ExpiredTransactionInfo,
+  ) => RebuildTimeBounds | undefined | Promise<RebuildTimeBounds | undefined>
 }
 
 async function validateWalletNetwork(
@@ -100,6 +109,25 @@ function walletErrorMessage(error: unknown): string {
     return 'Signature request declined'
   }
   return error instanceof Error ? error.message : String(error)
+}
+
+function expiredRebuildResult(
+  expiredTransaction: ExpiredTransactionInfo,
+  archivedKeysDetected: number,
+  restoreTxHash: TxHash,
+  sequenceRetries = 0,
+): ResurrectResult {
+  const error = new OriginalTransactionExpiredError(expiredTransaction)
+  return {
+    success: false,
+    archivedKeysDetected,
+    restoreTxHash,
+    error: error.message,
+    errorCode: error.code,
+    failure: createFailureGuidance(error.code, 'rebuild'),
+    expiredTransaction,
+    sequenceRetries,
+  }
 }
 
 /**
@@ -361,19 +389,123 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
 
       let sequenceRetries = 0
       let originalResult: rpc.Api.SendTransactionResponse | undefined
+      let approvedRebuildTimeBounds = params.rebuildTimeBounds
+
+      const originallyExpired = getExpiredTransactionInfo(originalTx)
+      if (originallyExpired) {
+        let replacementBounds: RebuildTimeBounds | undefined
+        try {
+          replacementBounds = await params.approveExpiredRebuild?.(originallyExpired)
+        } catch (error) {
+          const message = walletErrorMessage(error)
+          onRestoreFailed?.(message)
+          return {
+            success: false,
+            archivedKeysDetected: archivedKeys.length,
+            restoreTxHash: restoreHash,
+            error: message,
+            errorCode: 'UNKNOWN_ERROR',
+            failure: createFailureGuidance('UNKNOWN_ERROR', 'rebuild'),
+            expiredTransaction: originallyExpired,
+          }
+        }
+        if (!replacementBounds) {
+          const result = expiredRebuildResult(
+            originallyExpired,
+            archivedKeys.length,
+            restoreHash,
+          )
+          onRestoreFailed?.(result.error ?? 'Original transaction time bounds have expired')
+          return result
+        }
+        approvedRebuildTimeBounds = replacementBounds
+      }
 
       // Rebuild + sign + submit the original transaction. Retried (with a
       // freshly-fetched sequence number) if the network rejects it with
       // tx_bad_seq — the account may have been bumped by another client
       // between the rebuild above and this submission.
       for (;;) {
-        const preparedTx = await buildOriginalAfterRestore(
-          server,
-          originalTx,
-          networkPassphrase,
-          originalTx.fee,
-          params.rebuildTimeBounds,
-        )
+        let preparedTx: Transaction
+        try {
+          preparedTx = await buildOriginalAfterRestore(
+            server,
+            originalTx,
+            networkPassphrase,
+            originalTx.fee,
+            approvedRebuildTimeBounds,
+          )
+        } catch (error) {
+          if (error instanceof OriginalTransactionExpiredError) {
+            let replacementBounds: RebuildTimeBounds | undefined
+            try {
+              replacementBounds = await params.approveExpiredRebuild?.(error.expiredTransaction)
+            } catch (approvalError) {
+              const message = walletErrorMessage(approvalError)
+              onRestoreFailed?.(message)
+              return {
+                success: false,
+                archivedKeysDetected: archivedKeys.length,
+                restoreTxHash: restoreHash,
+                error: message,
+                errorCode: 'UNKNOWN_ERROR',
+                failure: createFailureGuidance('UNKNOWN_ERROR', 'rebuild'),
+                expiredTransaction: error.expiredTransaction,
+                sequenceRetries,
+              }
+            }
+            if (!replacementBounds) {
+              const result = expiredRebuildResult(
+                error.expiredTransaction,
+                archivedKeys.length,
+                restoreHash,
+                sequenceRetries,
+              )
+              onRestoreFailed?.(result.error ?? 'Original transaction time bounds have expired')
+              return result
+            }
+            approvedRebuildTimeBounds = replacementBounds
+            try {
+              preparedTx = await buildOriginalAfterRestore(
+                server,
+                originalTx,
+                networkPassphrase,
+                originalTx.fee,
+                approvedRebuildTimeBounds,
+              )
+            } catch (rebuildError) {
+              if (rebuildError instanceof ResurrectError) {
+                const result: ResurrectResult = {
+                  success: false,
+                  archivedKeysDetected: archivedKeys.length,
+                  restoreTxHash: restoreHash,
+                  error: rebuildError.message,
+                  errorCode: rebuildError.code,
+                  failure: createFailureGuidance(rebuildError.code, 'rebuild'),
+                  expiredTransaction: error.expiredTransaction,
+                  sequenceRetries,
+                }
+                onRestoreFailed?.(rebuildError.message)
+                return result
+              }
+              throw rebuildError
+            }
+          } else if (error instanceof ResurrectError) {
+            const result: ResurrectResult = {
+              success: false,
+              archivedKeysDetected: archivedKeys.length,
+              restoreTxHash: restoreHash,
+              error: error.message,
+              errorCode: error.code,
+              failure: createFailureGuidance(error.code, 'rebuild'),
+              sequenceRetries,
+            }
+            onRestoreFailed?.(error.message)
+            return result
+          } else {
+            throw error
+          }
+        }
 
         onSigningOriginal?.()
         const signedOriginalXdr = await wallet.signTransaction(asXdrBase64(preparedTx.toXDR()), {

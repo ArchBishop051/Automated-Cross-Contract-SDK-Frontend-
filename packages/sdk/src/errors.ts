@@ -1,3 +1,5 @@
+import type { ExpiredTransactionInfo } from './types.js'
+
 /**
  * Structured error codes for ResurrectResult — similar to GraphQL's
  * `extensions.code` pattern. Consumers can branch on these codes
@@ -57,6 +59,12 @@ export type ResurrectErrorCode =
    */
   | 'ORIGINAL_TX_FAILED'
 
+  /** The original transaction expired during restoration and needs approval to rebuild. */
+  | 'ORIGINAL_TRANSACTION_EXPIRED'
+
+  /** Caller-provided replacement time bounds are invalid or already expired. */
+  | 'INVALID_REBUILD_TIME_BOUNDS'
+
   /**
    * The simulation response was not a recognised type (not success, error,
    * or restore). This indicates a Soroban RPC API change or an SDK bug.
@@ -114,6 +122,20 @@ export class ResurrectError extends Error {
     if (Error.captureStackTrace) {
       Error.captureStackTrace(this, ResurrectError)
     }
+  }
+}
+
+/** Typed error raised when rebuilding would otherwise extend an expired transaction. */
+export class OriginalTransactionExpiredError extends ResurrectError {
+  readonly expiredTransaction: ExpiredTransactionInfo
+
+  constructor(expiredTransaction: ExpiredTransactionInfo) {
+    super(
+      'ORIGINAL_TRANSACTION_EXPIRED',
+      'Original transaction time bounds have expired; explicit approval is required to rebuild',
+    )
+    this.name = 'OriginalTransactionExpiredError'
+    this.expiredTransaction = expiredTransaction
   }
 }
 

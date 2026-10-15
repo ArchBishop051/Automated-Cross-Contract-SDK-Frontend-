@@ -155,22 +155,34 @@ relative timeout. If the original `maxTime` has elapsed before rebuilding, the
 SDK refuses to extend the user's intent.
 
 When the application has explicit authorization to replace the original expiry,
-pass new future Unix-second bounds with `rebuildTimeBounds`:
+provide `approveExpiredRebuild`. It receives the original bounds and must return
+new future Unix-second bounds to approve the rebuild. Omitting the callback or
+returning `undefined` stops after the restore transaction and returns
+`ORIGINAL_TRANSACTION_EXPIRED` with an `expiredTransaction` payload:
 
 ```ts
 const result = await sr.submitWithRestore({
   transaction,
   wallet,
-  rebuildTimeBounds: {
-    minTime: Math.floor(Date.now() / 1000),
-    maxTime: Math.floor(Date.now() / 1000) + 60,
+  approveExpiredRebuild: async ({ originalTimeBounds }) => {
+    const approved = await confirmReplaceExpiry(originalTimeBounds)
+    if (!approved) return undefined
+    const now = Math.floor(Date.now() / 1000)
+    return { minTime: now, maxTime: now + 60 }
   },
 })
 ```
 
-The SDK validates that `maxTime` is a future safe integer greater than
-`minTime`. Existing transactions without time bounds retain the prior 30-second
-rebuild timeout.
+The SDK validates approved bounds and returns `INVALID_REBUILD_TIME_BOUNDS` if
+they are not valid. `rebuildTimeBounds` remains available to set bounds before
+they expire; it does not bypass the explicit approval callback for an already
+expired original. Existing transactions without time bounds retain the prior
+30-second rebuild timeout.
+
+**Compatibility:** callers that previously handled an expired bound as a
+generic error can branch on the new `ORIGINAL_TRANSACTION_EXPIRED` error code
+and inspect `result.expiredTransaction`. The SDK never automatically extends
+an expired maximum time.
 
 ### Typed workflow failures
 

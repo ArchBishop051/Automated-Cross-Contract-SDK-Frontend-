@@ -34,6 +34,16 @@ const guidance: Record<ResurrectErrorCode, Guidance> = {
     retryable: false,
     nextStep: 'Review the transaction result and create a fresh transaction if needed.',
   },
+  ORIGINAL_TRANSACTION_EXPIRED: {
+    stage: 'rebuild',
+    retryable: false,
+    nextStep: 'Ask the user to approve replacement time bounds before rebuilding.',
+  },
+  INVALID_REBUILD_TIME_BOUNDS: {
+    stage: 'rebuild',
+    retryable: false,
+    nextStep: 'Provide valid future replacement time bounds and request explicit approval.',
+  },
   UNEXPECTED_SIMULATION_RESPONSE: {
     stage: 'simulation',
     retryable: false,

@@ -19,4 +19,17 @@ describe('createFailureGuidance', () => {
       nextStep: 'Connect the wallet, then review and retry the transaction.',
     })
   })
+
+  it('guides expired-transaction approval and invalid replacement bounds safely', () => {
+    expect(createFailureGuidance('ORIGINAL_TRANSACTION_EXPIRED')).toMatchObject({
+      stage: 'rebuild',
+      retryable: false,
+      nextStep: expect.stringContaining('approve'),
+    })
+    expect(createFailureGuidance('INVALID_REBUILD_TIME_BOUNDS')).toMatchObject({
+      stage: 'rebuild',
+      retryable: false,
+      nextStep: expect.stringContaining('future'),
+    })
+  })
 })

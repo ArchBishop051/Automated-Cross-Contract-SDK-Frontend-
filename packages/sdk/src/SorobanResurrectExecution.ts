@@ -2,6 +2,7 @@ import { rpc, Transaction, TransactionBuilder, xdr } from '@stellar/stellar-sdk'
 import type {
   ArchivedLedgerEntry,
   DryRunResult,
+  ExpiredTransactionInfo,
   ResurrectResult,
   RestoreKeysOptions,
   SorobanResurrectConfig,
@@ -16,6 +17,7 @@ import {
   buildOriginalAfterRestore,
   waitForTransaction,
   extractXdrOperations,
+  getExpiredTransactionInfo,
 } from './Restorer.js'
 import {
   isRestoreResponse,
@@ -31,6 +33,7 @@ import { SorobanResurrectSimulator } from './SorobanResurrectSimulation.js'
 import { asFeeStroops, asTxHash, asHistoryEntryId } from './branded-types.js'
 import { createFailureGuidance } from './FailureGuidance.js'
 import { calculateRestoreFee } from './feeCalculation.js'
+import { OriginalTransactionExpiredError, ResurrectError } from './errors.js'
 
 /**
  * Handles all transaction execution concerns for a `SorobanResurrect` instance:
@@ -433,6 +436,7 @@ export class SorobanResurrectExecutor {
       wallet,
       config: effectiveConfig,
       rebuildTimeBounds: options.rebuildTimeBounds,
+      approveExpiredRebuild: options.approveExpiredRebuild,
 
       onSigningRestore: () => {
         stateMgr.setState('signing_restore', 'Awaiting wallet signature for restore transaction...')
@@ -702,14 +706,91 @@ export class SorobanResurrectExecutor {
     const results: ResurrectResult[] = []
     for (let i = 0; i < items.length; i++) {
       const item = items[i]
+      const archivedKeysDetected = archivedKeysByTx[i]?.length ?? 0
       try {
-        const preparedTx = await buildOriginalAfterRestore(
-          this._server,
-          item.transaction,
-          networkPassphrase,
-          item.transaction.fee,
-          item.rebuildTimeBounds,
-        )
+        let rebuildTimeBounds = item.rebuildTimeBounds
+        const addExpiredFailure = (expiredTransaction: ExpiredTransactionInfo): void => {
+          const error =
+            'Original transaction time bounds have expired; explicit approval is required to rebuild'
+          item.onRestoreFailed?.(error)
+          results.push({
+            success: false,
+            restoreTxHash: restoreHash,
+            archivedKeysDetected,
+            error,
+            errorCode: 'ORIGINAL_TRANSACTION_EXPIRED',
+            failure: createFailureGuidance('ORIGINAL_TRANSACTION_EXPIRED', 'rebuild'),
+            expiredTransaction,
+          })
+        }
+
+        const expiredTransaction = getExpiredTransactionInfo(item.transaction)
+        if (expiredTransaction) {
+          let approvedBounds: RebuildTimeBounds | undefined
+          try {
+            approvedBounds = await item.approveExpiredRebuild?.(expiredTransaction)
+          } catch (approvalError) {
+            const message = approvalError instanceof Error ? approvalError.message : String(approvalError)
+            item.onRestoreFailed?.(message)
+            results.push({
+              success: false,
+              restoreTxHash: restoreHash,
+              archivedKeysDetected,
+              error: message,
+              errorCode: 'UNKNOWN_ERROR',
+              failure: createFailureGuidance('UNKNOWN_ERROR', 'rebuild'),
+              expiredTransaction,
+            })
+            continue
+          }
+          if (!approvedBounds) {
+            addExpiredFailure(expiredTransaction)
+            continue
+          }
+          rebuildTimeBounds = approvedBounds
+        }
+
+        let preparedTx: Transaction
+        try {
+          preparedTx = await buildOriginalAfterRestore(
+            this._server,
+            item.transaction,
+            networkPassphrase,
+            item.transaction.fee,
+            rebuildTimeBounds,
+          )
+        } catch (error) {
+          if (!(error instanceof OriginalTransactionExpiredError)) throw error
+          let approvedBounds: RebuildTimeBounds | undefined
+          try {
+            approvedBounds = await item.approveExpiredRebuild?.(error.expiredTransaction)
+          } catch (approvalError) {
+            const message = approvalError instanceof Error ? approvalError.message : String(approvalError)
+            item.onRestoreFailed?.(message)
+            results.push({
+              success: false,
+              restoreTxHash: restoreHash,
+              archivedKeysDetected,
+              error: message,
+              errorCode: 'UNKNOWN_ERROR',
+              failure: createFailureGuidance('UNKNOWN_ERROR', 'rebuild'),
+              expiredTransaction: error.expiredTransaction,
+            })
+            continue
+          }
+          if (!approvedBounds) {
+            addExpiredFailure(error.expiredTransaction)
+            continue
+          }
+          preparedTx = await buildOriginalAfterRestore(
+            this._server,
+            item.transaction,
+            networkPassphrase,
+            item.transaction.fee,
+            approvedBounds,
+          )
+        }
+
         item.onSigningOriginal?.()
         const signedXdr = await item.wallet.signTransaction(asXdrBase64(preparedTx.toXDR()), {
           networkPassphrase,
@@ -728,16 +809,39 @@ export class SorobanResurrectExecutor {
           success: true,
           originalTxHash: hash,
           restoreTxHash: restoreHash,
-          archivedKeysDetected: archivedKeysByTx[i]?.length ?? 0,
+          archivedKeysDetected,
         })
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         item.onRestoreFailed?.(message)
         emitter.emit('error', message)
+        if (err instanceof OriginalTransactionExpiredError) {
+          results.push({
+            success: false,
+            restoreTxHash: restoreHash,
+            archivedKeysDetected,
+            error: message,
+            errorCode: err.code,
+            failure: createFailureGuidance(err.code, 'rebuild'),
+            expiredTransaction: err.expiredTransaction,
+          })
+          continue
+        }
+        if (err instanceof ResurrectError) {
+          results.push({
+            success: false,
+            restoreTxHash: restoreHash,
+            archivedKeysDetected,
+            error: message,
+            errorCode: err.code,
+            failure: createFailureGuidance(err.code, 'rebuild'),
+          })
+          continue
+        }
         results.push({
           success: false,
           restoreTxHash: restoreHash,
-          archivedKeysDetected: archivedKeysByTx[i]?.length ?? 0,
+          archivedKeysDetected,
           error: message,
           errorCode: 'ORIGINAL_TX_FAILED',
           failure: createFailureGuidance('ORIGINAL_TX_FAILED', 'rebuild'),

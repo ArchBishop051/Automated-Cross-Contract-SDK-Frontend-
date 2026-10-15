@@ -41,6 +41,19 @@ function makeSampleTx(): Transaction {
     .build()
 }
 
+function makeExpiredSampleTx(): Transaction {
+  const kp = Keypair.random()
+  const account = new Account(kp.publicKey(), '41')
+  const now = Math.floor(Date.now() / 1000)
+  return new TransactionBuilder(account, {
+    fee: '100',
+    networkPassphrase: Networks.TESTNET,
+  })
+    .addOperation(Operation.restoreFootprint({}))
+    .setTimebounds(0, now - 1)
+    .build()
+}
+
 function makeWallet(): WalletAdapter {
   return {
     isConnected: vi.fn().mockResolvedValue(true),
@@ -331,6 +344,96 @@ describe('full restore workflow integration', () => {
     expect(server.sendTransaction).not.toHaveBeenCalled()
     expect(server.getAccount).not.toHaveBeenCalled()
     expect(callLog).toEqual(['simulateTransaction'])
+  })
+
+  it('returns a typed expired outcome and does not sign or submit the original transaction', async () => {
+    const server = makeIntegrationServer(callLog)
+    const wallet = makeWallet()
+    const onRestoreFailed = vi.fn()
+
+    const result = await executeWithRestore({
+      server,
+      transaction: makeExpiredSampleTx(),
+      wallet,
+      config: defaultConfig,
+      onRestoreFailed,
+    })
+
+    expect(result).toMatchObject({
+      success: false,
+      restoreTxHash: 'restore-tx-hash',
+      archivedKeysDetected: 1,
+      errorCode: 'ORIGINAL_TRANSACTION_EXPIRED',
+      failure: {
+        stage: 'rebuild',
+        code: 'ORIGINAL_TRANSACTION_EXPIRED',
+        retryable: false,
+      },
+      expiredTransaction: {
+        originalTimeBounds: {
+          minTime: 0,
+        },
+      },
+    })
+    expect(wallet.signTransaction).toHaveBeenCalledTimes(1)
+    expect(server.sendTransaction).toHaveBeenCalledTimes(1)
+    expect(server.getAccount).toHaveBeenCalledTimes(1)
+    expect(server.simulateTransaction).toHaveBeenCalledTimes(1)
+    expect(onRestoreFailed).toHaveBeenCalledWith(result.error)
+  })
+
+  it('rebuilds an expired original only when the caller approves replacement bounds', async () => {
+    const server = makeIntegrationServer(callLog)
+    const wallet = makeWallet()
+    const now = Math.floor(Date.now() / 1000)
+    const approveExpiredRebuild = vi.fn().mockResolvedValue({
+      minTime: now,
+      maxTime: now + 120,
+    })
+
+    const result = await executeWithRestore({
+      server,
+      transaction: makeExpiredSampleTx(),
+      wallet,
+      config: defaultConfig,
+      approveExpiredRebuild,
+    })
+
+    expect(result.success).toBe(true)
+    expect(result.originalTxHash).toBe('original-tx-hash')
+    expect(approveExpiredRebuild).toHaveBeenCalledWith(
+      expect.objectContaining({
+        originalTimeBounds: expect.objectContaining({ minTime: 0 }),
+      }),
+    )
+    expect(wallet.signTransaction).toHaveBeenCalledTimes(2)
+    expect(server.sendTransaction).toHaveBeenCalledTimes(2)
+  })
+
+  it('rejects invalid replacement bounds returned by the approval callback', async () => {
+    const server = makeIntegrationServer(callLog)
+    const wallet = makeWallet()
+    const now = Math.floor(Date.now() / 1000)
+
+    const result = await executeWithRestore({
+      server,
+      transaction: makeExpiredSampleTx(),
+      wallet,
+      config: defaultConfig,
+      approveExpiredRebuild: () => ({ minTime: now, maxTime: now }),
+    })
+
+    expect(result).toMatchObject({
+      success: false,
+      restoreTxHash: 'restore-tx-hash',
+      errorCode: 'INVALID_REBUILD_TIME_BOUNDS',
+      failure: {
+        stage: 'rebuild',
+        code: 'INVALID_REBUILD_TIME_BOUNDS',
+      },
+    })
+    expect(wallet.signTransaction).toHaveBeenCalledTimes(1)
+    expect(server.sendTransaction).toHaveBeenCalledTimes(1)
   })
 
   it('stops the workflow and never submits the original tx if the restore transaction fails to confirm', async () => {

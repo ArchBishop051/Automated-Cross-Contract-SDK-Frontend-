@@ -10,12 +10,17 @@ import {
   SorobanResurrectConfig,
   FeeBumpSponsor,
   ArchivedLedgerEntry,
+  ExpiredTransactionInfo,
   RebuildTimeBounds,
 } from './types.js'
 import type { ISorobanRpcClient } from './RpcClient.js'
 import { DEFAULT_NETWORK_PASSPHRASE } from './constants.js'
 import { calculateRestoreFee } from './feeCalculation.js'
-import { RestoreFeeExceededError } from './errors.js'
+import {
+  OriginalTransactionExpiredError,
+  ResurrectError,
+  RestoreFeeExceededError,
+} from './errors.js'
 import {
   asXdrBase64,
   type SequenceNumber,
@@ -641,6 +646,24 @@ function parseTimeBound(value: string | number, name: string): number {
   return parsed
 }
 
+/** Returns expiry details when an original transaction's finite maxTime elapsed. */
+export function getExpiredTransactionInfo(
+  transaction: Transaction,
+  now = Math.floor(Date.now() / 1000),
+): ExpiredTransactionInfo | undefined {
+  const bounds = transaction.timeBounds
+  if (!bounds) return undefined
+
+  const minTime = parseTimeBound(bounds.minTime, 'minTime')
+  const maxTime = parseTimeBound(bounds.maxTime, 'maxTime')
+  if (maxTime === 0 || maxTime > now) return undefined
+
+  return {
+    originalTimeBounds: { minTime, maxTime },
+    detectedAt: now,
+  }
+}
+
 /**
  * Rebuilds the original transaction after a successful restore.
  * Fetches the latest account sequence number, re-signs with the
@@ -678,21 +701,26 @@ export async function buildOriginalAfterRestore(
   fee: string,
   rebuildTimeBounds?: RebuildTimeBounds,
 ): Promise<Transaction> {
-  const bounds = rebuildTimeBounds ?? originalTx.timeBounds
   const now = Math.floor(Date.now() / 1000)
+  const bounds = rebuildTimeBounds ?? originalTx.timeBounds
+  if (rebuildTimeBounds) {
+    const replacementMinTime = parseTimeBound(rebuildTimeBounds.minTime ?? 0, 'minTime')
+    const replacementMaxTime = parseTimeBound(rebuildTimeBounds.maxTime, 'maxTime')
+    if (replacementMaxTime <= now || replacementMinTime >= replacementMaxTime) {
+      throw new ResurrectError(
+        'INVALID_REBUILD_TIME_BOUNDS',
+        'Rebuild time bounds must have a future maxTime greater than minTime',
+      )
+    }
+  } else {
+    const expiredTransaction = getExpiredTransactionInfo(originalTx, now)
+    if (expiredTransaction) {
+      throw new OriginalTransactionExpiredError(expiredTransaction)
+    }
+  }
+
   const minTime = parseTimeBound(bounds?.minTime ?? '0', 'minTime')
   const maxTime = parseTimeBound(bounds?.maxTime ?? '0', 'maxTime')
-  if (
-    rebuildTimeBounds &&
-    (!Number.isSafeInteger(rebuildTimeBounds.maxTime) ||
-      rebuildTimeBounds.maxTime <= now ||
-      minTime >= rebuildTimeBounds.maxTime)
-  ) {
-    throw new Error('Rebuild time bounds must have a future maxTime greater than minTime')
-  }
-  if (!rebuildTimeBounds && maxTime > 0 && maxTime <= now) {
-    throw new Error('Original transaction time bounds have expired; refusing to extend them')
-  }
 
   const source = originalTx.source
   const account = await server.getAccount(source)

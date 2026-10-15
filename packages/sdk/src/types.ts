@@ -410,6 +410,8 @@ export interface ResurrectResult {
   failure?: ResurrectFailure
   /** Decoded on-chain cause when the RPC returned a failed transaction. */
   onchainError?: OnchainError
+  /** Original bounds and detection time when an expired rebuild was refused. */
+  expiredTransaction?: ExpiredTransactionInfo
   /** True when the result came from a dry-run (no transactions submitted). */
   dryRun?: boolean
   /** Detailed dry-run information (present when dryRun is true). */
@@ -512,6 +514,18 @@ export interface RebuildTimeBounds {
   maxTime: number
 }
 
+/**
+ * The original finite transaction bounds that expired while a restore was
+ * in progress. Times are absolute Unix seconds.
+ */
+export interface ExpiredTransactionInfo {
+  originalTimeBounds: {
+    minTime: number
+    maxTime: number
+  }
+  detectedAt: number
+}
+
 /** Options for submitting a transaction with automatic archive restoration. */
 export interface SubmitWithRestoreOptions {
   /** The Soroban transaction to submit. */
@@ -536,6 +550,14 @@ export interface SubmitWithRestoreOptions {
    * to replace the original expiry.
    */
   rebuildTimeBounds?: RebuildTimeBounds
+  /**
+   * Called only when the original transaction expires during a restore.
+   * Return future replacement bounds to explicitly approve rebuilding; return
+   * `undefined` (or omit the callback) to stop with `ORIGINAL_TRANSACTION_EXPIRED`.
+   */
+  approveExpiredRebuild?: (
+    expiredTransaction: ExpiredTransactionInfo,
+  ) => RebuildTimeBounds | undefined | Promise<RebuildTimeBounds | undefined>
   /** Called when restore transaction is ready to be signed. */
   onSigningRestore?: () => void
   /** Called after restore transaction is signed and being submitted. */

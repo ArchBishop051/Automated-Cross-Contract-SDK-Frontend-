@@ -24,6 +24,7 @@ import type {
   FeeBumpSponsor,
   DryRunResult,
   RebuildTimeBounds,
+  ExpiredTransactionInfo,
   TxDiagnostics,
   ISorobanRpcClient,
   KnownWallet,
@@ -45,6 +46,7 @@ type PublicExports =
   | 'SorobanResurrectNetwork'
   | 'NETWORK_PRESETS'
   | 'ResurrectError'
+  | 'OriginalTransactionExpiredError'
   | 'createAdapter'
   | 'isKnownWallet'
   | 'SUPPORTED_WALLETS'
@@ -151,6 +153,9 @@ test('SorobanResurrectConfig and result types keep their shape', () => {
   expectTypeOf<ResurrectResult['archivedKeysDetected']>().toEqualTypeOf<number>()
   expectTypeOf<ResurrectResult['error']>().toEqualTypeOf<string | undefined>()
   expectTypeOf<ResurrectResult['failure']>().toEqualTypeOf<ResurrectFailure | undefined>()
+  expectTypeOf<ResurrectResult['expiredTransaction']>().toEqualTypeOf<
+    ExpiredTransactionInfo | undefined
+  >()
   expectTypeOf<ResurrectFailure['retryable']>().toEqualTypeOf<boolean>()
   expectTypeOf<ResurrectFailure['nextStep']>().toEqualTypeOf<string>()
 
@@ -165,6 +170,7 @@ test('SorobanResurrectConfig and result types keep their shape', () => {
   expectTypeOf<InstanceType<typeof sdk.SorobanResurrect>>().toHaveProperty('previewRestore')
   expectTypeOf<RebuildTimeBounds>().toHaveProperty('maxTime')
   expectTypeOf<SubmitWithRestoreOptions>().toHaveProperty('rebuildTimeBounds')
+  expectTypeOf<SubmitWithRestoreOptions>().toHaveProperty('approveExpiredRebuild')
   expectTypeOf<TxDiagnostics>().toHaveProperty('events')
 })
 
