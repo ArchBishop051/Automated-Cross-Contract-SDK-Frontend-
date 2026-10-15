@@ -32,6 +32,8 @@ import type { LedgerEntryTTLInfo, QueryLedgerTTLOptions, TTLQueryResult } from '
 import { NETWORK_PRESETS } from './constants.js'
 import { watchTTL, type TTLWatchHandle, type TTLWatchOptions } from './TTLWatch.js'
 import type { SorobanNetworkName } from './constants.js'
+import { assertBatchSize, settleBatchWithConcurrency } from './batchLimits.js'
+import { ResurrectError } from './errors.js'
 
 /**
  * Main facade for the Soroban-Resurrect SDK.
@@ -59,8 +61,6 @@ import type { SorobanNetworkName } from './constants.js'
  * // result.historyId can be used to retry via resurrect.retry(result.historyId, wallet)
  * ```
  */
-const debug = createDebugger('core')
-
 export class SorobanResurrect {
   private _server: ISorobanRpcClient
   private _config: Required<Omit<SorobanResurrectConfig, 'rpcClient'>> & { rpcClient: ISorobanRpcClient }
@@ -69,6 +69,7 @@ export class SorobanResurrect {
   private readonly _simulator: SorobanResurrectSimulator
   private readonly _executor: SorobanResurrectExecutor
   private readonly _ttlWatches = new Set<TTLWatchHandle>()
+  readonly ready: Promise<void>
 
   // Last set of archived keys from a standalone detectArchivedKeys() call.
   // The FSM context already stores archivedKeys for the full submit workflow;
@@ -98,15 +99,6 @@ export class SorobanResurrect {
     this._config = resolved.config
 
     this._stateMgr = new SorobanResurrectStateManager()
-    // Mirror every state transition into the structured log.
-    this._stateMgr.onStateChange((info) => {
-      this.logger.debug(`state → ${info.state}`, {
-        requestId: this._requestId,
-        state: info.state,
-        message: info.message,
-        error: info.error,
-      })
-    })
     this._simulator = new SorobanResurrectSimulator(
       this._server,
       this._config,
@@ -405,7 +397,37 @@ export class SorobanResurrect {
    * @returns Array of archived-key arrays, one entry per transaction.
    */
   async detectArchivedKeysBatch(transactions: Transaction[]): Promise<ArchivedLedgerEntry[][]> {
-    return Promise.all(transactions.map((tx) => this._simulator.detectArchivedKeys(tx)))
+    assertBatchSize(
+      transactions.length,
+      this._config.maxBatchSize,
+      'detectArchivedKeysBatch',
+    )
+
+    const concurrency =
+      this._config.archiveDetectionMethod === 'direct'
+        ? 1
+        : Math.max(1, this._config.archiveDetectionConcurrency)
+    const settled = await settleBatchWithConcurrency(
+      transactions,
+      concurrency,
+      (transaction) => this._simulator.detectArchivedKeysOrThrow(transaction),
+    )
+    const failures = settled.flatMap((result, index) =>
+      result.status === 'rejected' ? [index] : [],
+    )
+
+    if (failures.length > 0) {
+      const succeeded = transactions.length - failures.length
+      throw new ResurrectError(
+        'ARCHIVE_DETECTION_BATCH_FAILED',
+        `Archive detection failed for transaction index(es) ${failures.join(', ')}; ${succeeded} of ${transactions.length} completed successfully.`,
+      )
+    }
+
+    return settled.map((result) => {
+      if (result.status === 'rejected') throw result.reason
+      return result.value
+    })
   }
 
   /**
@@ -532,22 +554,7 @@ export class SorobanResurrect {
    * ```
    */
   async submitWithRestore(options: SubmitWithRestoreOptions): Promise<ResurrectResult> {
-    this._requestId = createRequestId()
-    this.logger.info('submitWithRestore: start', { requestId: this._requestId })
-    try {
-      const result = await this._executor.submitWithRestore(options)
-      this.logger[result.success ? 'info' : 'error']('submitWithRestore: finished', {
-        requestId: this._requestId,
-        success: result.success,
-        archivedKeysDetected: result.archivedKeysDetected,
-        restoreTxHash: result.restoreTxHash,
-        originalTxHash: result.originalTxHash,
-        error: result.error,
-      })
-      return result
-    } finally {
-      this._requestId = undefined
-    }
+    return this._executor.submitWithRestore(options)
   }
 
   /**
