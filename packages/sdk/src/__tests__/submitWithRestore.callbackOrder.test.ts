@@ -11,7 +11,11 @@ import {
 } from '@stellar/stellar-sdk'
 import { SorobanResurrect } from '../SorobanResurrect.js'
 import { WalletError } from '../types.js'
-import type { WalletAdapter, SorobanResurrectConfig } from '../types.js'
+import type {
+  WalletAdapter,
+  SorobanResurrectConfig,
+  SubmitLifecycleEvent,
+} from '../types.js'
 
 function makeSampleTx(): Transaction {
   const kp = Keypair.random()
@@ -151,6 +155,51 @@ describe('SorobanResurrect.submitWithRestore — callback invocation ordering', 
       'onOriginalSubmitted',
     ])
     expect(callbacks.onRestoreFailed).not.toHaveBeenCalled()
+  })
+
+  it('publishes typed lifecycle phases and a terminal completion event', async () => {
+    vi.spyOn(resurrect.server, 'simulateTransaction')
+      .mockResolvedValueOnce(makeRestoreResponse() as never)
+      .mockResolvedValueOnce(makeSuccessResponse() as never)
+    vi.spyOn(resurrect.server, 'getAccount').mockResolvedValue(
+      new Account(Keypair.random().publicKey(), '2') as never,
+    )
+    vi.spyOn(resurrect.server, 'sendTransaction')
+      .mockResolvedValueOnce({ hash: 'restore-hash' } as never)
+      .mockResolvedValueOnce({ hash: 'original-hash' } as never)
+    vi.spyOn(resurrect.server, 'getTransaction').mockResolvedValue({
+      status: rpc.Api.GetTransactionStatus.SUCCESS,
+    } as never)
+
+    const events: string[] = []
+    const listener = vi.fn((event: SubmitLifecycleEvent) => events.push(event.phase))
+    const callback = vi.fn()
+    const unsubscribe = resurrect.on('workflowLifecycle', listener)
+
+    const result = await resurrect.submitWithRestore({
+      transaction: makeSampleTx(),
+      wallet: makeWallet(),
+      requestId: 'withdrawal-42',
+      onLifecycleEvent: callback,
+    })
+
+    unsubscribe()
+    expect(result.success).toBe(true)
+    expect(events).toEqual([
+      'simulation_started',
+      'restore_preparation_started',
+      'restore_submission_started',
+      'restore_submitted',
+      'restore_confirmation_started',
+      'restore_confirmed',
+      'original_submission_started',
+      'original_submitted',
+      'completed',
+    ])
+    expect(listener).toHaveBeenCalledWith(
+      expect.objectContaining({ phase: 'completed', requestId: 'withdrawal-42' }),
+    )
+    expect(callback).toHaveBeenCalledTimes(9)
   })
 
   it('opts into transient RPC retries without repeating a wallet signature', async () => {

@@ -455,6 +455,11 @@ export interface SubmitWithRestoreOptions {
   onRestoreConfirmed?: (txHash: TxHash) => void;
   onOriginalSubmitted?: (txHash: TxHash) => void;
   onRestoreFailed?: (error: string) => void;
+  /**
+   * Called for each typed workflow phase, including simulation, restore
+   * preparation/submission/confirmation, original submission, and completion.
+   * The same payloads are published through `sdk.on('workflowLifecycle', ...)`.
+   */
   onLifecycleEvent?: (event: SubmitLifecycleEvent) => void;
   /** Stable logical identifier used to share an in-flight request. */
   requestId?: string;

@@ -15,6 +15,7 @@ import type {
   ArchivedLedgerEntry,
   ResurrectResult,
   DryRunResult,
+  SubmitLifecycleEvent,
 } from './types.js'
 import { WalletError } from './types.js'
 import type { ResurrectErrorCode } from './errors.js'
@@ -42,7 +43,6 @@ import {
   DEFAULT_MAX_SEQUENCE_RETRIES,
 } from './constants.js'
 import { asTxHash, asXdrBase64, type TxHash, type XdrBase64 } from './branded-types.js'
-import { parseTransactionFailure } from './TransactionFailure.js'
 
 /** Parameters for the full restore-and-submit execution flow. */
 export interface ExecuteParams {
@@ -72,6 +72,14 @@ export interface ExecuteParams {
   onRestoreFailed?: (error: string) => void
   /** Called when a fee-bump sponsor is about to sign a transaction. */
   onSigningFeeBump?: () => void
+  /** Called when a lifecycle phase is reached. */
+  onLifecycleEvent?: (event: SubmitLifecycleEvent) => void
+  /** Optional caller correlation id attached to lifecycle events. */
+  requestId?: string
+  /** Optional sponsor fee-bump configuration. */
+  feeBumpConfig?: FeeBumpConfig
+  /** Optional cache for simulation results. */
+  simulationCache?: SimulationCache
 }
 
 async function validateWalletNetwork(
@@ -243,25 +251,23 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
     onOriginalSubmitted,
     onRestoreFailed,
     onSigningFeeBump,
+    onLifecycleEvent,
+    requestId,
+    onSigningRestore,
+    onSubmittingRestore,
+    feeBumpConfig,
+    simulationCache,
   } = params
 
   const networkPassphrase = config.networkPassphrase ?? DEFAULT_NETWORK_PASSPHRASE
 
-  // Extract optional fields that may not be destructured from params
-  const onSigningRestore = (params as ExecuteParams & { onSigningRestore?: () => void })
-    .onSigningRestore
-  const onSubmittingRestore = (params as ExecuteParams & { onSubmittingRestore?: () => void })
-    .onSubmittingRestore
-  const onSigningOriginal = (params as ExecuteParams & { onSigningOriginal?: () => void })
-    .onSigningOriginal
-  const feeBumpConfig = (params as ExecuteParams & { feeBumpConfig?: FeeBumpConfig }).feeBumpConfig
-  const simulationCache = (params as ExecuteParams & { simulationCache?: SimulationCache })
-    .simulationCache
+  const onSigningOriginal = params.onSigningOriginal
   const pollInterval = config.pollIntervalMs ?? POLL_INTERVAL_MS
   const pollTimeout = config.pollTimeoutMs ?? POLL_TIMEOUT_MS
 
   try {
     await validateWalletNetwork(wallet, networkPassphrase)
+    onLifecycleEvent?.({ phase: 'simulation_started', requestId })
     const simResponse = await simulateWithCache(server, originalTx, simulationCache)
 
     if (isErrorResponse(simResponse)) {
@@ -273,6 +279,11 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
     if (isRestoreResponse(simResponse)) {
       const archivedKeys = extractArchivedKeys(simResponse)
       debug('executeWithRestore: restore required for %d entries', archivedKeys.length)
+      onLifecycleEvent?.({
+        phase: 'restore_preparation_started',
+        requestId,
+        archivedKeys,
+      })
 
       const isConnected = await wallet.isConnected()
       if (!isConnected) {
@@ -318,18 +329,27 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
         }
       }
 
+      onLifecycleEvent?.({ phase: 'restore_submission_started', requestId })
       onSubmittingRestore?.()
       const restoreResult = await server.sendTransaction(signedRestoreTx)
       const restoreHash = asTxHash(restoreResult.hash)
       onRestoreSubmitted?.(restoreHash)
 
+      onLifecycleEvent?.({
+        phase: 'restore_submitted',
+        requestId,
+        transactionHash: restoreHash,
+      })
+      onLifecycleEvent?.({
+        phase: 'restore_confirmation_started',
+        requestId,
+        transactionHash: restoreHash,
+      })
       const restoreStatus = await waitForTransaction(server, restoreHash, pollInterval, pollTimeout)
 
       if (restoreStatus.status !== rpc.Api.GetTransactionStatus.SUCCESS) {
         const err = 'Restore transaction failed'
-        const onchainError = parseTransactionFailure(restoreStatus)
         onRestoreFailed?.(err)
-        const diagnostics = parseTransactionDiagnostics(restoreStatus)
         return {
           success: false,
           archivedKeysDetected: archivedKeys.length,
@@ -340,6 +360,11 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
       }
 
       onRestoreConfirmed?.(restoreHash)
+      onLifecycleEvent?.({
+        phase: 'restore_confirmed',
+        requestId,
+        transactionHash: restoreHash,
+      })
 
       const maxSequenceRetries = config.maxSequenceRetries ?? DEFAULT_MAX_SEQUENCE_RETRIES
 
@@ -376,6 +401,7 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
           }
         }
 
+        onLifecycleEvent?.({ phase: 'original_submission_started', requestId })
         originalResult = await server.sendTransaction(signedOriginalTx)
 
         if (!isTxBadSeqError(originalResult) || sequenceRetries >= maxSequenceRetries) {
@@ -395,13 +421,15 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
           error: err,
           sequenceRetries,
         }
-
-        originalHash = asTxHash(originalResult.hash)
-        break
       }
 
       const originalHash = asTxHash(originalResult!.hash)
       onOriginalSubmitted?.(originalHash)
+      onLifecycleEvent?.({
+        phase: 'original_submitted',
+        requestId,
+        transactionHash: originalHash,
+      })
 
       return {
         success: true,
@@ -409,16 +437,6 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
         restoreTxHash: restoreHash,
         archivedKeysDetected: archivedKeys.length,
         sequenceRetries,
-      }
-
-      const originalResult = await server.sendTransaction(signedOriginalTx)
-      onOriginalSubmitted?.(originalResult.hash)
-
-      return {
-        success: true,
-        originalTxHash: originalResult.hash,
-        restoreTxHash: restoreResult.hash,
-        archivedKeysDetected: archivedKeys.length,
       }
     }
 
@@ -443,9 +461,15 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
         server,
         onSigning: onSigningOriginal,
         onSigningFeeBump,
+        onSubmitting: () => onLifecycleEvent?.({ phase: 'original_submission_started', requestId }),
       })
 
       onOriginalSubmitted?.(hash)
+      onLifecycleEvent?.({
+        phase: 'original_submitted',
+        requestId,
+        transactionHash: hash,
+      })
 
       // Wait for confirmation on success path for consistency with restore path
       const txStatus = await waitForTx(server, hash, config)

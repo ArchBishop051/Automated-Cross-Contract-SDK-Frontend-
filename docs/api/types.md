@@ -73,6 +73,36 @@ rebuilding or re-signing it.
 | `baseDelayMs` | `250` | Initial exponential-backoff delay. |
 | `maxDelayMs` | `5000` | Maximum delay between attempts. |
 
+### Lifecycle events
+
+`SubmitWithRestoreOptions.onLifecycleEvent` receives a discriminated
+`SubmitLifecycleEvent` for each phase. The identical events are available to
+instance subscribers through `sr.on('workflowLifecycle', listener)`:
+
+```ts
+const unsubscribe = sr.on('workflowLifecycle', (event) => {
+  switch (event.phase) {
+    case 'simulation_started':
+    case 'restore_preparation_started':
+    case 'restore_submission_started':
+    case 'restore_submitted':
+    case 'restore_confirmation_started':
+    case 'restore_confirmed':
+    case 'original_submission_started':
+    case 'original_submitted':
+    case 'completed':
+    case 'failed':
+      updateProgress(event)
+      break
+  }
+})
+```
+
+Every event may include the supplied `requestId`; transaction hashes, detected
+keys, terminal results, and errors are included when applicable. Call
+`unsubscribe()` when the listener is no longer needed. Existing stage-specific
+callbacks and events remain available.
+
 ## `SorobanResurrectNetwork`
 
 Describes a Soroban network: its RPC endpoint and passphrase. Use the preset

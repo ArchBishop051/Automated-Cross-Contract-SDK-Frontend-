@@ -3,6 +3,7 @@ import {
   ArchivedLedgerEntry,
   ResurrectResult,
   RestoreKeysOptions,
+  SubmitLifecycleEvent,
   SubmitWithRestoreOptions,
   WalletAdapter,
 } from './types.js'
@@ -20,7 +21,6 @@ import { attachHistoryPersistence, type HistoryPersistenceHandle } from './Histo
 import type { HistoryPersistenceOptions } from './types.js'
 import { SorobanResurrectStateManager } from './SorobanResurrectState.js'
 import { SorobanResurrectSimulator } from './SorobanResurrectSimulation.js'
-import type { ISorobanRpcClient } from './RpcClient.js'
 import { asTxHash, asHistoryEntryId } from './branded-types.js'
 import { RetryingRpcClient } from './RpcClient.js'
 
@@ -314,6 +314,11 @@ export class SorobanResurrectExecutor {
     const historyId = this._history.add(transaction)
     const stateMgr = this._stateMgr
     const emitter = stateMgr.emitter
+    const emitLifecycle = (event: SubmitLifecycleEvent): void => {
+      const payload = { ...event, requestId: event.requestId ?? options.requestId }
+      emitter.emit('workflowLifecycle', payload)
+      options.onLifecycleEvent?.(payload)
+    }
 
     // Per-call restore-tx memo override (falls back to instance config).
     const effectiveConfig =
@@ -330,6 +335,8 @@ export class SorobanResurrectExecutor {
       transaction,
       wallet,
       config: effectiveConfig,
+      requestId: options.requestId,
+      onLifecycleEvent: emitLifecycle,
 
       onSigningRestore: () => {
         stateMgr.setState('signing_restore', 'Awaiting wallet signature for restore transaction...')
@@ -381,16 +388,22 @@ export class SorobanResurrectExecutor {
       },
     })
 
-    this._history.update(historyId, result)
+    const finalResult = { ...result, historyId }
+    this._history.update(historyId, finalResult)
 
-    if (!result.success) {
-      stateMgr.setError(result.error ?? 'Unknown error')
-      emitter.emit('error', result.error ?? 'Unknown error')
+    if (!finalResult.success) {
+      stateMgr.setError(finalResult.error ?? 'Unknown error')
+      emitter.emit('error', finalResult.error ?? 'Unknown error')
     }
 
-    emitter.emit('restoreComplete', result)
+    emitLifecycle({
+      phase: finalResult.success ? 'completed' : 'failed',
+      result: finalResult,
+      error: finalResult.error,
+    })
+    emitter.emit('restoreComplete', finalResult)
 
-    return { ...result, historyId }
+    return finalResult
   }
 
   /**
