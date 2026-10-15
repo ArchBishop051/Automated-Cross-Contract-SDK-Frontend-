@@ -241,6 +241,7 @@ export async function buildRestoreTransactionFromKeys(
  * @param pollIntervalMs - Maximum delay between polls, in ms (default `1000`).
  * @param pollTimeoutMs - Total time to keep polling before giving up, in ms
  *   (default `60_000`).
+ * @param signal - Optional signal that aborts the wait and clears its retry timer.
  * @returns The terminal `GetTransactionResponse` (status `SUCCESS` or
  *   `FAILED`).
  * @throws {Error} If the transaction does not reach a terminal status
@@ -257,12 +258,14 @@ export async function waitForTransaction(
   hash: TxHash | string,
   pollIntervalMs: number = 1000,
   pollTimeoutMs: number = 60_000,
+  signal?: AbortSignal,
 ): Promise<rpc.Api.GetTransactionResponse> {
   const startTime = Date.now()
   let attempt = 0
 
   while (Date.now() - startTime < pollTimeoutMs) {
-    const response = await server.getTransaction(hash)
+    if (signal?.aborted) throw createAbortError()
+    const response = await awaitWithAbort(server.getTransaction(hash), signal)
 
     if (
       response.status === rpc.Api.GetTransactionStatus.SUCCESS ||
@@ -276,10 +279,58 @@ export async function waitForTransaction(
     const exponentialDelay = 100 * Math.pow(2, attempt)
     const delay = Math.min(exponentialDelay, pollIntervalMs)
     const jitter = delay * (0.5 + Math.random() * 0.5)
-    await new Promise((resolve) => setTimeout(resolve, jitter))
+    await abortableDelay(jitter, signal)
   }
 
   throw new Error(`Transaction ${hash} did not complete within ${pollTimeoutMs}ms`)
+}
+
+function createAbortError(): Error {
+  const error = new Error('Operation cancelled')
+  error.name = 'AbortError'
+  return error
+}
+
+function awaitWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise
+  if (signal.aborted) return Promise.reject(createAbortError())
+
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener('abort', onAbort)
+      reject(createAbortError())
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort)
+        if (signal.aborted) reject(createAbortError())
+        else resolve(value)
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort)
+        reject(error)
+      },
+    )
+  })
+}
+
+function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) return new Promise((resolve) => setTimeout(resolve, ms))
+  if (signal.aborted) return Promise.reject(createAbortError())
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    const onAbort = () => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', onAbort)
+      reject(createAbortError())
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
 }
 
 /**
@@ -334,7 +385,9 @@ async function streamTransactionViaEvents(
   hash: TxHash | string,
   timeoutMs: number,
   rpcUrl: string,
+  signal?: AbortSignal,
 ): Promise<rpc.Api.GetTransactionResponse | null> {
+  if (signal?.aborted) throw createAbortError()
   // SSE relies on browser-standard fetch/AbortController with a readable
   // stream body. Older Node runtimes (< 18) may lack these — degrade
   // gracefully to the polling fallback instead of throwing.
@@ -346,11 +399,12 @@ async function streamTransactionViaEvents(
   // We try getLatestLedger first, then fall back to the transaction's latestLedger.
   let startLedger: number
   try {
-    const health = await server.getLatestLedger()
+    const health = await awaitWithAbort(server.getLatestLedger(), signal)
     startLedger = health.sequence
   } catch {
+    if (signal?.aborted) throw createAbortError()
     try {
-      const txResp = await server.getTransaction(hash)
+      const txResp = await awaitWithAbort(server.getTransaction(hash), signal)
       const txLedger = (txResp as any).latestLedger ?? (txResp as any).ledger
       if (txLedger != null && txLedger > 0) {
         startLedger = txLedger
@@ -359,6 +413,7 @@ async function streamTransactionViaEvents(
         return null
       }
     } catch {
+      if (signal?.aborted) throw createAbortError()
       return null
     }
   }
@@ -373,6 +428,9 @@ async function streamTransactionViaEvents(
 
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+  const onAbort = () => controller.abort()
+  signal?.addEventListener('abort', onAbort, { once: true })
+  if (signal?.aborted) controller.abort()
 
   try {
     const response = await fetch(rpcUrl, {
@@ -431,23 +489,26 @@ async function streamTransactionViaEvents(
             )
             if (matched) {
               // Verify with getTransaction
-              const result = await server.getTransaction(hash)
+              const result = await awaitWithAbort(server.getTransaction(hash), signal)
               if (isTerminalStatus(result.status)) {
                 return result
               }
               // Event found but transaction not yet terminal — keep listening
             }
           } catch {
+            if (signal?.aborted) throw createAbortError()
             // Ignore parse errors on individual SSE data lines
           }
         }
       }
     }
   } catch {
+    if (signal?.aborted) throw createAbortError()
     // SSE stream failed (network error, timeout, abort) — fall through
     return null
   } finally {
     clearTimeout(timeoutId)
+    signal?.removeEventListener('abort', onAbort)
     controller.abort()
   }
 
@@ -464,18 +525,20 @@ async function pollTransactionAdaptive(
   server: ISorobanRpcClient,
   hash: string,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<rpc.Api.GetTransactionResponse> {
   let attempt = 0
   const startTime = Date.now()
 
   while (Date.now() - startTime < timeoutMs) {
-    const response = await server.getTransaction(hash)
+    if (signal?.aborted) throw createAbortError()
+    const response = await awaitWithAbort(server.getTransaction(hash), signal)
     if (isTerminalStatus(response.status)) {
       return response
     }
     attempt++
     const delay = Math.min(200 * attempt, 2000)
-    await new Promise((resolve) => setTimeout(resolve, delay))
+    await abortableDelay(delay, signal)
   }
 
   throw new Error(`Transaction ${hash} did not complete within ${timeoutMs}ms`)
@@ -503,6 +566,7 @@ async function pollTransactionAdaptive(
  *   SSE to be attempted at all; omit it (or run in an environment missing
  *   `fetch`/`AbortController`/`TextDecoder`) and this falls straight to
  *   adaptive polling.
+ * @param signal - Optional signal that aborts the stream or polling fallback.
  * @returns The final transaction response
  * @throws If the transaction does not complete within the timeout
  */
@@ -511,20 +575,23 @@ export async function waitForTransactionSSE(
   hash: TxHash | string,
   pollTimeoutMs: number = 60_000,
   rpcUrl = '',
+  signal?: AbortSignal,
 ): Promise<rpc.Api.GetTransactionResponse> {
+  if (signal?.aborted) throw createAbortError()
   // First, attempt to get the transaction immediately (it might already be done)
-  const immediate = await server.getTransaction(hash)
+  const immediate = await awaitWithAbort(server.getTransaction(hash), signal)
   if (isTerminalStatus(immediate.status)) {
     return immediate
   }
 
   // Try SSE stream via getEvents (low latency when supported)
   try {
-    const sseResult = await streamTransactionViaEvents(server, hash, pollTimeoutMs, rpcUrl)
+    const sseResult = await streamTransactionViaEvents(server, hash, pollTimeoutMs, rpcUrl, signal)
     if (sseResult) {
       return sseResult
     }
   } catch {
+    if (signal?.aborted) throw createAbortError()
     // SSE failed — fall through to adaptive polling
   }
 
@@ -533,7 +600,7 @@ export async function waitForTransactionSSE(
   // and avoid tracking elapsed time across the SSE stream and the
   // immediate getTransaction call, we use a fresh timeout here.
   // In practice the SSE stream either succeeds quickly (< 2s) or fails fast.
-  return pollTransactionAdaptive(server, hash, pollTimeoutMs)
+  return pollTransactionAdaptive(server, hash, pollTimeoutMs, signal)
 }
 
 /**

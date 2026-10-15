@@ -11,6 +11,8 @@ const mockOnStateChange = vi.fn()
 const mockReset = vi.fn()
 const mockDetectArchivedKeys = vi.fn()
 const mockSubmitWithRestore = vi.fn()
+const mockDispose = vi.fn()
+const mockOn = vi.fn()
 
 const PROCESSING_STATES = [
   'simulating',
@@ -28,6 +30,8 @@ vi.mock('@soroban-resurrect/sdk', () => ({
     reset: mockReset,
     detectArchivedKeys: mockDetectArchivedKeys,
     submitWithRestore: mockSubmitWithRestore,
+    dispose: mockDispose,
+    on: mockOn,
   })),
   isProcessingState: (state: string) => PROCESSING_STATES.includes(state),
 }))
@@ -55,6 +59,7 @@ describe('useSorobanResurrect', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockOnStateChange.mockReturnValue(vi.fn())
+    mockOn.mockReturnValue(vi.fn())
   })
 
   it('starts in the idle state with an SDK instance', () => {
@@ -126,6 +131,7 @@ describe('useSorobanResurrect', () => {
     })
     expect(api().resurrect.value).not.toBe(first)
     expect(api().state.value?.state).toBe('idle')
+    expect(mockDispose).toHaveBeenCalledTimes(1)
   })
 
   it('unsubscribes from SDK state changes on unmount', () => {
@@ -134,6 +140,7 @@ describe('useSorobanResurrect', () => {
     const { wrapper } = mountComposable(ref(testConfig))
     wrapper.unmount()
     expect(unsubscribe).toHaveBeenCalledTimes(1)
+    expect(mockDispose).toHaveBeenCalledTimes(1)
   })
 
   it('delegates submitWithRestore to the SDK instance', async () => {
@@ -144,7 +151,42 @@ describe('useSorobanResurrect', () => {
     const tx = {} as never
     const wallet = {} as never
     await expect(api().submitWithRestore(tx, wallet)).resolves.toBe(expected)
-    expect(mockSubmitWithRestore).toHaveBeenCalledWith({ transaction: tx, wallet })
+    expect(mockSubmitWithRestore).toHaveBeenCalledWith({
+      transaction: tx,
+      wallet,
+      signal: expect.any(AbortSignal),
+    })
+  })
+
+  it('cancel aborts active submissions', () => {
+    let signal!: AbortSignal
+    mockSubmitWithRestore.mockImplementation(
+      (options: { signal: AbortSignal }) =>
+        new Promise((resolve) => {
+          signal = options.signal
+          signal.addEventListener('abort', () =>
+            resolve({ success: false, archivedKeysDetected: 0, error: 'Operation cancelled' }),
+          )
+        }),
+    )
+    const { api } = mountComposable(ref(testConfig))
+
+    const pending = api().submitWithRestore({} as never, {} as never)
+    api().cancel()
+
+    expect(signal.aborted).toBe(true)
+    return expect(pending).resolves.toMatchObject({ success: false, error: 'Operation cancelled' })
+  })
+
+  it('unsubscribes typed event listeners on unmount', () => {
+    const unsubscribe = vi.fn()
+    mockOn.mockReturnValue(unsubscribe)
+    const { api, wrapper } = mountComposable(ref(testConfig))
+
+    api().on('restoreComplete', vi.fn())
+    wrapper.unmount()
+
+    expect(unsubscribe).toHaveBeenCalledTimes(1)
   })
 
   it('delegates detectArchivedKeys to the SDK instance', async () => {

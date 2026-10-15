@@ -10,7 +10,8 @@ describe('createSubscriptionStore', () => {
     store.setSnapshot({ state: 'success' })
 
     expect(store.getSnapshot()).toEqual({ state: 'success' })
-    expect(listener).toHaveBeenCalledExactlyOnceWith({ state: 'success' })
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(listener).toHaveBeenCalledWith({ state: 'success' })
   })
 
   it('does not notify when the snapshot is unchanged by Object.is', () => {
