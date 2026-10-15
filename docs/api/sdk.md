@@ -152,6 +152,29 @@ invoked either. If fee estimation fails, the error is surfaced on
 onStateChange(listener: (info: RestoreStateInfo) => void): () => void
 ```
 
+#### Framework-independent subscription store
+
+`createSubscriptionStore<T>(initialSnapshot)` provides a small typed external
+store that does not depend on React, Vue, Svelte, or another UI framework. It is
+intended for framework bindings and adapters that need a stable snapshot,
+synchronous change notifications, and an unsubscribe handle.
+
+```typescript
+import { createSubscriptionStore } from '@soroban-resurrect/sdk'
+
+const store = createSubscriptionStore({ state: 'idle' })
+const unsubscribe = store.subscribe((snapshot) => {
+  console.log(snapshot.state)
+})
+
+store.setSnapshot({ state: 'success' })
+console.log(store.getSnapshot())
+unsubscribe()
+```
+
+Subscribers are called only when the snapshot changes according to `Object.is`.
+The returned `unsubscribe` function is safe to call more than once.
+
 ### Latency and UX
 
 Hardware signing is interactive: the user must confirm on the device. Expect
