@@ -44,6 +44,7 @@ Hook to access the `SorobanResurrect` API from within a `<SorobanResurrectProvid
 - `isProcessing` is `true` while `state.state` is any of: `simulating`, `signing_restore`, `submitting_restore`, `confirming_restore`, `signing_original`, `submitting_original`.
 - `submitWithRestore` and `detectArchivedKeys` are safe to call before the underlying instance mounts — they return an idle-shaped fallback (`{ success: false, error: 'Not initialized' }` / `[]`) rather than throwing.
 - `on` subscribes to a typed lifecycle event on the current SDK instance and returns an unsubscribe function. See [Lifecycle Events](#lifecycle-events) below.
+- Wallet cancellation resolves as a failed `ResurrectResult` (`success: false` and an `error` message); `useSorobanResurrectSubmit` exposes that result and error and calls `onError`/`onSettled`. State subscriptions are removed on unmount.
 
 #### `isProcessing` contract
 

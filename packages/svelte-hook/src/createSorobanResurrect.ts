@@ -221,7 +221,8 @@ export function createSorobanResurrect(
         itemStore.set({ status: 'submitting', result: null })
         try {
           const result = await getResurrect().submitWithRestore(items[i])
-          itemStore.set({ status: 'success', result })
+          itemStore.set({ status: result.success ? 'success' : 'error', result })
+          lastResultWritable.set(result)
           results.push(result)
         } catch (error) {
           itemStore.set({ status: 'error', result: null })
@@ -255,7 +256,9 @@ export function createSorobanResurrect(
   }
 
   const reset = (fromState?: RestoreState): void => {
-    if (fromState && get(stateWritable).state !== fromState) {
+    const currentState = get(stateWritable).state
+    resurrect?.reset(fromState)
+    if (fromState && currentState !== fromState) {
       return
     }
     stateWritable.set({ state: 'idle', message: '' })

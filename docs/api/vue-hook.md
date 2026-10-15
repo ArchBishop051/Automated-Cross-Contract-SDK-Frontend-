@@ -7,6 +7,10 @@ component. Accepts a ref, getter, or plain `SorobanResurrectConfig`; recreates
 the SDK when the config changes and cleans up on unmount. This path is
 unchanged — use it when a component needs its own instance.
 
+Wallet cancellation resolves with the SDK's failed `ResurrectResult` rather
+than throwing; the same result is stored in `lastResult`. The state listener is
+removed when the component unmounts.
+
 ```ts
 const { state, isProcessing, submitWithRestore, reset } = useSorobanResurrect(config)
 ```
