@@ -1,4 +1,4 @@
-import { rpc, Account, Keypair, SorobanDataBuilder } from '@stellar/stellar-sdk'
+import { rpc, Account, Keypair, Memo, SorobanDataBuilder } from '@stellar/stellar-sdk'
 import {
   TransactionBuilder,
   Operation,
@@ -11,6 +11,8 @@ import type { ISorobanRpcClient } from './RpcClient.js'
 import { DEFAULT_NETWORK_PASSPHRASE } from './constants.js'
 import { calculateRestoreFee } from './feeCalculation.js'
 import { ISorobanRpcClient } from './RpcClient.js'
+import { validateRestoreMemoConfig } from './memoValidation.js'
+import { RestoreFeeExceededError } from './errors.js'
 
 /** Parameters for building a restore transaction. */
 export interface BuildRestoreTxParams {
@@ -50,6 +52,7 @@ export function resolveRestoreMemo(
   explicit: Memo | undefined,
   config: Pick<SorobanResurrectConfig, 'restoreTxMemo' | 'restoreTxMemoText'>,
 ): Memo | undefined {
+  validateRestoreMemoConfig(config)
   if (explicit) return explicit
   if (config.restoreTxMemo) return config.restoreTxMemo
   if (config.restoreTxMemoText !== undefined && config.restoreTxMemoText !== '') {
@@ -120,16 +123,15 @@ export async function buildRestoreTransaction(params: BuildRestoreTxParams): Pro
   }
 
   const restoreFee = calculateRestoreFee(minResourceFee, config)
-  assertRestoreFeeWithinCap(restoreFee, config)
 
   if (config.maxRestoreFeeStroops !== undefined) {
     const cap = BigInt(config.maxRestoreFeeStroops)
     if (BigInt(restoreFee) > cap) {
-      throw new RestoreFeeCapExceededError(restoreFee, config.maxRestoreFeeStroops.toString())
+      throw new RestoreFeeExceededError(Number(restoreFee), Number(cap))
     }
   }
 
-  const restoreTx = new TransactionBuilder(account, {
+  const builder = new TransactionBuilder(account, {
     fee: restoreFee,
     networkPassphrase,
   })
@@ -137,6 +139,7 @@ export async function buildRestoreTransaction(params: BuildRestoreTxParams): Pro
     .setSorobanData(transactionData)
     .setTimeout(30)
 
+  const memo = resolveRestoreMemo(params.memo, config)
   if (memo) {
     builder.addMemo(memo)
   }
