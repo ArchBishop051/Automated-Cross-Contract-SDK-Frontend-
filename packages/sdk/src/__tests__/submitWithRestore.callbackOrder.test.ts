@@ -202,6 +202,82 @@ describe('SorobanResurrect.submitWithRestore — callback invocation ordering', 
     expect(callback).toHaveBeenCalledTimes(9)
   })
 
+  it('shares only concurrent requests with the same logical requestId', async () => {
+    vi.spyOn(resurrect.server, 'simulateTransaction').mockResolvedValue(
+      makeSuccessResponse() as never,
+    )
+    vi.spyOn(resurrect.server, 'sendTransaction')
+      .mockResolvedValueOnce({ hash: 'same-request-hash' } as never)
+      .mockResolvedValueOnce({ hash: 'distinct-request-a' } as never)
+      .mockResolvedValueOnce({ hash: 'distinct-request-b' } as never)
+      .mockResolvedValueOnce({ hash: 'same-id-after-completion' } as never)
+    vi.spyOn(resurrect.server, 'getTransaction').mockResolvedValue({
+      status: rpc.Api.GetTransactionStatus.SUCCESS,
+    } as never)
+
+    const transaction = makeSampleTx()
+    const wallet = makeWallet()
+    const firstCallback = vi.fn()
+    const duplicateCallback = vi.fn()
+    const [first, duplicate] = await Promise.all([
+      resurrect.submitWithRestore({
+        transaction,
+        wallet,
+        requestId: 'order-17',
+        onLifecycleEvent: firstCallback,
+      }),
+      resurrect.submitWithRestore({
+        transaction,
+        wallet,
+        requestId: 'order-17',
+        onLifecycleEvent: duplicateCallback,
+      }),
+    ])
+
+    expect(first).toEqual(duplicate)
+    expect(first.originalTxHash).toBe('same-request-hash')
+    expect(resurrect.server.simulateTransaction).toHaveBeenCalledTimes(1)
+    expect(wallet.signTransaction).toHaveBeenCalledTimes(1)
+    expect(firstCallback).toHaveBeenCalled()
+    expect(duplicateCallback).not.toHaveBeenCalled()
+    expect(resurrect.history).toHaveLength(1)
+
+    const distinct = await Promise.all([
+      resurrect.submitWithRestore({ transaction, wallet, requestId: 'order-18' }),
+      resurrect.submitWithRestore({ transaction, wallet, requestId: 'order-19' }),
+    ])
+    expect(distinct.map((result) => result.originalTxHash).sort()).toEqual([
+      'distinct-request-a',
+      'distinct-request-b',
+    ])
+    expect(resurrect.server.simulateTransaction).toHaveBeenCalledTimes(3)
+    expect(resurrect.history).toHaveLength(3)
+
+    const later = await resurrect.submitWithRestore({
+      transaction,
+      wallet,
+      requestId: 'order-17',
+    })
+    expect(later.originalTxHash).toBe('same-id-after-completion')
+    expect(resurrect.server.simulateTransaction).toHaveBeenCalledTimes(4)
+    expect(resurrect.history).toHaveLength(4)
+  })
+
+  it('rejects an empty requestId without starting a workflow', async () => {
+    const result = await resurrect.submitWithRestore({
+      transaction: makeSampleTx(),
+      wallet: makeWallet(),
+      requestId: '   ',
+    })
+
+    expect(result).toMatchObject({
+      success: false,
+      error: 'requestId must be a non-empty string',
+    })
+    expect(resurrect.server.simulateTransaction).not.toHaveBeenCalled()
+    expect(resurrect.history).toHaveLength(0)
+  })
+
   it('opts into transient RPC retries without repeating a wallet signature', async () => {
     vi.spyOn(resurrect.server, 'simulateTransaction')
       .mockRejectedValueOnce(new TypeError('fetch failed'))

@@ -45,6 +45,7 @@ export class SorobanResurrectExecutor {
   private readonly _simulator: SorobanResurrectSimulator
   private readonly _history: TransactionHistory
   private readonly _historyPersistence: HistoryPersistenceHandle | null
+  private readonly _inFlightRequests = new Map<string, Promise<ResurrectResult>>()
 
   /**
    * @param server    - Soroban RPC client instance.
@@ -298,6 +299,35 @@ export class SorobanResurrectExecutor {
    * @returns {@link ResurrectResult} with outcome, hashes, and `historyId`.
    */
   async submitWithRestore(options: SubmitWithRestoreOptions): Promise<ResurrectResult> {
+    const requestId = options.requestId
+    if (requestId === undefined) {
+      return this.submitWithRestoreOnce(options)
+    }
+    if (requestId.trim().length === 0) {
+      return {
+        success: false,
+        archivedKeysDetected: 0,
+        error: 'requestId must be a non-empty string',
+      }
+    }
+
+    const active = this._inFlightRequests.get(requestId)
+    if (active) return active
+
+    const request = this.submitWithRestoreOnce(options)
+    this._inFlightRequests.set(requestId, request)
+    try {
+      return await request
+    } finally {
+      if (this._inFlightRequests.get(requestId) === request) {
+        this._inFlightRequests.delete(requestId)
+      }
+    }
+  }
+
+  private async submitWithRestoreOnce(
+    options: SubmitWithRestoreOptions,
+  ): Promise<ResurrectResult> {
     const {
       transaction,
       wallet,

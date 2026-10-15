@@ -103,6 +103,28 @@ keys, terminal results, and errors are included when applicable. Call
 `unsubscribe()` when the listener is no longer needed. Existing stage-specific
 callbacks and events remain available.
 
+### Logical request deduplication
+
+Pass a stable, non-empty `requestId` to coalesce concurrent calls that represent
+the same logical operation:
+
+```ts
+const options = { transaction, wallet, requestId: `withdrawal:${userActionId}` }
+const [first, duplicate] = await Promise.all([
+  sr.submitWithRestore(options),
+  sr.submitWithRestore(options),
+])
+// Both callers receive the same result; only one restore/submission flow runs.
+```
+
+Deduplication is scoped to one SDK instance and only lasts while the request is
+in flight. A later call using the same id starts a new attempt. Different ids
+remain independent and may run concurrently. A coalesced caller receives the
+first call's result; callbacks are invoked only for the call that started the
+flow. Calls without `requestId` retain the prior, non-deduplicated behavior.
+An empty or whitespace-only id returns a validation error without starting a
+workflow.
+
 ## `SorobanResurrectNetwork`
 
 Describes a Soroban network: its RPC endpoint and passphrase. Use the preset
