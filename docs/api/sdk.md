@@ -172,6 +172,25 @@ The SDK validates that `maxTime` is a future safe integer greater than
 `minTime`. Existing transactions without time bounds retain the prior 30-second
 rebuild timeout.
 
+### Typed workflow failures
+
+Failed `submitWithRestore` results retain their readable `error` and existing
+`errorCode`, and now include `failure` metadata with a lifecycle `stage`,
+stable `code`, `retryable` flag, and safe `nextStep` guidance:
+
+```ts
+if (!result.success && result.failure) {
+  console.error(result.error) // readable diagnostic
+  showRecoveryAction(result.failure.nextStep)
+  if (result.failure.retryable) {
+    offerRetryFor(result.failure.code)
+  }
+}
+```
+
+Decoded on-chain diagnostics remain available separately as
+`result.onchainError`; do not display raw diagnostic data as recovery guidance.
+
 #### `onStateChange(listener)`
 
 ```typescript

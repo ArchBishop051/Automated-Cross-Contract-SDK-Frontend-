@@ -72,6 +72,15 @@ export type ResurrectErrorCode =
   | 'UNSUPPORTED_WALLET_CAPABILITY'
 
   /**
+   * The estimated restore fee exceeded the configured cap. Review the fee
+   * limit or wait until the network fee is lower.
+   */
+  | 'RESTORE_FEE_CAP_EXCEEDED'
+
+  /** The restoreKeys call received no ledger keys. */
+  | 'INVALID_RESTORE_KEYS'
+
+  /**
    * An unexpected JavaScript exception was thrown during the workflow.
    * Check `result.error` for the exception message.
    */

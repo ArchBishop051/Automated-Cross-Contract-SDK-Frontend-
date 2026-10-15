@@ -295,6 +295,18 @@ export async function waitForTransaction(
   throw new Error(`Transaction ${hash} did not complete within ${pollTimeoutMs}ms`)
 }
 
+/** Returns true when RPC rejected a submission for a stale sequence number. */
+export function isTxBadSeqError(
+  response: rpc.Api.SendTransactionResponse,
+): boolean {
+  if (response.status !== 'ERROR' || !response.errorResult) return false
+  try {
+    return response.errorResult.result().switch().name === 'txBadSeq'
+  } catch {
+    return false
+  }
+}
+
 /**
  * Helper: checks if a transaction status is terminal.
  */

@@ -58,6 +58,26 @@ original absolute bounds and returns an error instead of extending an expired
 transaction's intent. Transactions with no bounds retain the existing
 30-second rebuild timeout.
 
+## `ResurrectFailure`
+
+Failure results may include `failure` in addition to the existing readable
+`error` and `errorCode` fields. Use this stable metadata for lifecycle-aware
+handling rather than parsing the message.
+
+```typescript
+interface ResurrectFailure {
+  stage: 'simulation' | 'restore' | 'rebuild' | 'signing' | 'submission' | 'confirmation' | 'unknown'
+  code: ResurrectErrorCode
+  retryable: boolean
+  nextStep: string
+}
+```
+
+`nextStep` is safe user-facing guidance and does not include raw RPC or contract
+diagnostics. When the network supplies a failed transaction result,
+`ResurrectResult.onchainError` continues to expose its readable decoded
+details separately.
+
 ## `SorobanResurrectNetwork`
 
 Describes a Soroban network: its RPC endpoint and passphrase. Use the preset

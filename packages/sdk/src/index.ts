@@ -33,6 +33,8 @@ export type {
   ArchiveDetectionOptions,
   SimulateResponse,
   ResurrectResult,
+  ResurrectFailure,
+  ResurrectFailureStage,
   TxDiagnostics,
   DryRunResult,
   RebuildTimeBounds,

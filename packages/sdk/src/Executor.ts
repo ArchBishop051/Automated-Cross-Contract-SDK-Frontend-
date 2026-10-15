@@ -19,6 +19,7 @@ import type {
 } from './types.js'
 import { WalletError } from './types.js'
 import type { ResurrectErrorCode } from './errors.js'
+import { ResurrectError } from './errors.js'
 import {
   isRestoreResponse,
   isSuccessResponse,
@@ -40,10 +41,13 @@ import {
   DEFAULT_NETWORK_PASSPHRASE,
   POLL_INTERVAL_MS,
   POLL_TIMEOUT_MS,
-  DEFAULT_MAX_SEQUENCE_RETRIES,
+  MAX_SEQUENCE_RETRIES,
 } from './constants.js'
 import { asTxHash, asXdrBase64, type TxHash, type XdrBase64 } from './branded-types.js'
 import { parseTransactionFailure } from './TransactionFailure.js'
+import { createFailureGuidance } from './FailureGuidance.js'
+import { ensureAddressAuthorization } from './Authorization.js'
+import { assertWalletCapability } from './walletCapabilities.js'
 
 /** Parameters for the full restore-and-submit execution flow. */
 export interface ExecuteParams {
@@ -270,7 +274,13 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
     if (isErrorResponse(simResponse)) {
       const err = `Simulation error: ${simResponse.error}`
       onRestoreFailed?.(err)
-      return { success: false, archivedKeysDetected: 0, error: err, errorCode: 'SIMULATION_FAILED' }
+      return {
+        success: false,
+        archivedKeysDetected: 0,
+        error: err,
+        errorCode: 'SIMULATION_FAILED',
+        failure: createFailureGuidance('SIMULATION_FAILED'),
+      }
     }
 
     if (isRestoreResponse(simResponse)) {
@@ -286,6 +296,7 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
           archivedKeysDetected: archivedKeys.length,
           error: err,
           errorCode: 'WALLET_NOT_CONNECTED',
+          failure: createFailureGuidance('WALLET_NOT_CONNECTED'),
         }
       }
 
@@ -318,6 +329,7 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
           archivedKeysDetected: archivedKeys.length,
           error: err,
           errorCode: 'RESTORE_TX_PARSE_FAILED',
+          failure: createFailureGuidance('RESTORE_TX_PARSE_FAILED'),
         }
       }
 
@@ -332,19 +344,20 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
         const err = 'Restore transaction failed'
         const onchainError = parseTransactionFailure(restoreStatus)
         onRestoreFailed?.(err)
-        const diagnostics = parseTransactionDiagnostics(restoreStatus)
         return {
           success: false,
           archivedKeysDetected: archivedKeys.length,
           restoreTxHash: restoreHash,
           error: err,
           errorCode: 'RESTORE_TX_FAILED',
+          failure: createFailureGuidance('RESTORE_TX_FAILED'),
+          ...(onchainError ? { onchainError } : {}),
         }
       }
 
       onRestoreConfirmed?.(restoreHash)
 
-      const maxSequenceRetries = config.maxSequenceRetries ?? DEFAULT_MAX_SEQUENCE_RETRIES
+      const maxSequenceRetries = config.maxSequenceRetries ?? MAX_SEQUENCE_RETRIES
 
       let sequenceRetries = 0
       let originalResult: rpc.Api.SendTransactionResponse | undefined
@@ -376,6 +389,8 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
             archivedKeysDetected: archivedKeys.length,
             restoreTxHash: restoreHash,
             error: err,
+            errorCode: 'ORIGINAL_TX_PARSE_FAILED',
+            failure: createFailureGuidance('ORIGINAL_TX_PARSE_FAILED'),
             sequenceRetries,
           }
         }
@@ -397,11 +412,24 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
           archivedKeysDetected: archivedKeys.length,
           restoreTxHash: restoreHash,
           error: err,
+          errorCode: 'ORIGINAL_TX_FAILED',
+          failure: createFailureGuidance('ORIGINAL_TX_FAILED', 'submission'),
           sequenceRetries,
         }
+      }
 
-        originalHash = asTxHash(originalResult.hash)
-        break
+      if (originalResult!.status === 'ERROR') {
+        const err = 'Original transaction submission failed'
+        onRestoreFailed?.(err)
+        return {
+          success: false,
+          archivedKeysDetected: archivedKeys.length,
+          restoreTxHash: restoreHash,
+          error: err,
+          errorCode: 'ORIGINAL_TX_FAILED',
+          failure: createFailureGuidance('ORIGINAL_TX_FAILED', 'submission'),
+          sequenceRetries,
+        }
       }
 
       const originalHash = asTxHash(originalResult!.hash)
@@ -413,16 +441,6 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
         restoreTxHash: restoreHash,
         archivedKeysDetected: archivedKeys.length,
         sequenceRetries,
-      }
-
-      const originalResult = await server.sendTransaction(signedOriginalTx)
-      onOriginalSubmitted?.(originalResult.hash)
-
-      return {
-        success: true,
-        originalTxHash: originalResult.hash,
-        restoreTxHash: restoreResult.hash,
-        archivedKeysDetected: archivedKeys.length,
       }
     }
 
@@ -455,11 +473,16 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
       const txStatus = await waitForTx(server, hash, config)
 
       if (txStatus.status !== rpc.Api.GetTransactionStatus.SUCCESS) {
+        const err = 'Transaction failed to confirm'
+        const onchainError = parseTransactionFailure(txStatus)
+        onRestoreFailed?.(err)
         return {
           success: false,
           archivedKeysDetected: 0,
-          error: 'Transaction failed to confirm',
+          error: err,
           errorCode: 'ORIGINAL_TX_FAILED',
+          failure: createFailureGuidance('ORIGINAL_TX_FAILED'),
+          ...(onchainError ? { onchainError } : {}),
         }
       }
 
@@ -477,11 +500,19 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
       archivedKeysDetected: 0,
       error: err,
       errorCode: 'UNEXPECTED_SIMULATION_RESPONSE',
+      failure: createFailureGuidance('UNEXPECTED_SIMULATION_RESPONSE'),
     }
   } catch (err) {
     const message = walletErrorMessage(err)
     onRestoreFailed?.(message)
-    return { success: false, archivedKeysDetected: 0, error: message, errorCode: 'UNKNOWN_ERROR' }
+    const errorCode = err instanceof ResurrectError ? err.code : 'UNKNOWN_ERROR'
+    return {
+      success: false,
+      archivedKeysDetected: 0,
+      error: message,
+      errorCode,
+      failure: createFailureGuidance(errorCode),
+    }
   }
 }
 
@@ -508,6 +539,7 @@ export async function sendTransaction(
         archivedKeysDetected: 0,
         error: 'Wallet is not connected',
         errorCode: 'WALLET_NOT_CONNECTED' as const,
+        failure: createFailureGuidance('WALLET_NOT_CONNECTED'),
       }
     }
 
@@ -523,10 +555,20 @@ export async function sendTransaction(
         archivedKeysDetected: 0,
         error: 'Failed to parse signed transaction',
         errorCode: 'ORIGINAL_TX_PARSE_FAILED' as const,
+        failure: createFailureGuidance('ORIGINAL_TX_PARSE_FAILED'),
       }
     }
 
     const result = await server.sendTransaction(signedTx)
+    if (result.status === 'ERROR') {
+      return {
+        success: false,
+        archivedKeysDetected: 0,
+        error: 'Transaction submission failed',
+        errorCode: 'ORIGINAL_TX_FAILED',
+        failure: createFailureGuidance('ORIGINAL_TX_FAILED', 'submission'),
+      }
+    }
 
     return {
       success: true,
@@ -540,6 +582,7 @@ export async function sendTransaction(
       archivedKeysDetected: 0,
       error: message,
       errorCode: 'UNKNOWN_ERROR' as const,
+      failure: createFailureGuidance('UNKNOWN_ERROR'),
     }
   }
 }
@@ -630,17 +673,26 @@ export async function restoreKeys(params: RestoreKeysParams): Promise<ResurrectR
   const networkPassphrase = config.networkPassphrase ?? DEFAULT_NETWORK_PASSPHRASE
 
   if (keys.length === 0) {
+    const error = 'restoreKeys called with an empty key list'
     return {
       success: false,
       archivedKeysDetected: 0,
-      error: 'restoreKeys called with an empty key list',
+      error,
+      errorCode: 'INVALID_RESTORE_KEYS',
+      failure: createFailureGuidance('INVALID_RESTORE_KEYS'),
     }
   }
 
   try {
     const isConnected = await wallet.isConnected()
     if (!isConnected) {
-      return { success: false, archivedKeysDetected: keys.length, error: 'Wallet is not connected' }
+      return {
+        success: false,
+        archivedKeysDetected: keys.length,
+        error: 'Wallet is not connected',
+        errorCode: 'WALLET_NOT_CONNECTED',
+        failure: createFailureGuidance('WALLET_NOT_CONNECTED'),
+      }
     }
 
     const publicKey = await wallet.getPublicKey()
@@ -663,6 +715,8 @@ export async function restoreKeys(params: RestoreKeysParams): Promise<ResurrectR
         success: false,
         archivedKeysDetected: keys.length,
         error: `Simulation error: ${simResponse.error}`,
+        errorCode: 'SIMULATION_FAILED',
+        failure: createFailureGuidance('SIMULATION_FAILED'),
       }
     }
 
@@ -689,6 +743,8 @@ export async function restoreKeys(params: RestoreKeysParams): Promise<ResurrectR
         success: false,
         archivedKeysDetected: keys.length,
         error: 'Failed to parse signed restore transaction',
+        errorCode: 'RESTORE_TX_PARSE_FAILED',
+        failure: createFailureGuidance('RESTORE_TX_PARSE_FAILED'),
       }
     }
 
@@ -698,17 +754,32 @@ export async function restoreKeys(params: RestoreKeysParams): Promise<ResurrectR
         success: false,
         archivedKeysDetected: keys.length,
         error: 'Restore transaction rejected with tx_bad_seq',
+        errorCode: 'RESTORE_TX_FAILED',
+        failure: createFailureGuidance('RESTORE_TX_FAILED', 'submission'),
+      }
+    }
+    if (sendResult.status === 'ERROR') {
+      return {
+        success: false,
+        archivedKeysDetected: keys.length,
+        error: 'Restore transaction submission failed',
+        errorCode: 'RESTORE_TX_FAILED',
+        failure: createFailureGuidance('RESTORE_TX_FAILED', 'submission'),
       }
     }
     const restoreHash = asTxHash(sendResult.hash)
 
     const status = await waitForTx(server, restoreHash, config)
     if (status.status !== rpc.Api.GetTransactionStatus.SUCCESS) {
+      const onchainError = parseTransactionFailure(status)
       return {
         success: false,
         archivedKeysDetected: keys.length,
         restoreTxHash: restoreHash,
         error: 'Restore transaction failed to confirm',
+        errorCode: 'RESTORE_TX_FAILED',
+        failure: createFailureGuidance('RESTORE_TX_FAILED'),
+        ...(onchainError ? { onchainError } : {}),
       }
     }
 
@@ -719,6 +790,13 @@ export async function restoreKeys(params: RestoreKeysParams): Promise<ResurrectR
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    return { success: false, archivedKeysDetected: keys.length, error: message }
+    const errorCode = err instanceof ResurrectError ? err.code : 'UNKNOWN_ERROR'
+    return {
+      success: false,
+      archivedKeysDetected: keys.length,
+      error: message,
+      errorCode,
+      failure: createFailureGuidance(errorCode),
+    }
   }
 }

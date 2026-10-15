@@ -119,6 +119,12 @@ describe('executeWithRestore', () => {
     expect(result.success).toBe(false)
     expect(result.archivedKeysDetected).toBe(0)
     expect(result.error).toContain('simulation failed')
+    expect(result.failure).toMatchObject({
+      stage: 'simulation',
+      code: 'SIMULATION_FAILED',
+      retryable: false,
+      nextStep: expect.any(String),
+    })
   })
 
   it('submits transaction directly when simulation succeeds (no restore)', async () => {
@@ -266,6 +272,15 @@ describe('executeWithRestore', () => {
     expect(result.success).toBe(false)
     expect(result.restoreTxHash).toBe('restore-hash')
     expect(result.error).toBe('Restore transaction failed')
+    expect(result.failure).toMatchObject({
+      stage: 'confirmation',
+      code: 'RESTORE_TX_FAILED',
+      retryable: false,
+    })
+    expect(result.onchainError).toMatchObject({
+      message: expect.any(String),
+      diagnosticMessages: [],
+    })
   })
 
   it('calls onRestoreFailed on simulation error response', async () => {

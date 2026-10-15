@@ -22,6 +22,7 @@ import { SorobanResurrectStateManager } from './SorobanResurrectState.js'
 import { SorobanResurrectSimulator } from './SorobanResurrectSimulation.js'
 import type { ISorobanRpcClient } from './RpcClient.js'
 import { asTxHash, asHistoryEntryId } from './branded-types.js'
+import { createFailureGuidance } from './FailureGuidance.js'
 
 /**
  * Handles all transaction execution concerns for a `SorobanResurrect` instance:
@@ -515,7 +516,13 @@ export class SorobanResurrectExecutor {
     const isConnected = await wallet.isConnected()
     if (!isConnected) {
       const error = 'Wallet is not connected'
-      return items.map(() => ({ success: false, archivedKeysDetected: 0, error }))
+      return items.map(() => ({
+        success: false,
+        archivedKeysDetected: 0,
+        error,
+        errorCode: 'WALLET_NOT_CONNECTED',
+        failure: createFailureGuidance('WALLET_NOT_CONNECTED'),
+      }))
     }
     const publicKey = await wallet.getPublicKey()
 
@@ -585,6 +592,8 @@ export class SorobanResurrectExecutor {
         success: false,
         archivedKeysDetected: archivedKeysByTx[i]?.length ?? 0,
         error: message,
+        errorCode: 'RESTORE_TX_FAILED',
+        failure: createFailureGuidance('RESTORE_TX_FAILED', 'restore'),
       }))
     }
 
@@ -597,6 +606,7 @@ export class SorobanResurrectExecutor {
           item.transaction,
           networkPassphrase,
           item.transaction.fee,
+          item.rebuildTimeBounds,
         )
         item.onSigningOriginal?.()
         const signedXdr = await item.wallet.signTransaction(asXdrBase64(preparedTx.toXDR()), {
@@ -627,6 +637,8 @@ export class SorobanResurrectExecutor {
           restoreTxHash: restoreHash,
           archivedKeysDetected: archivedKeysByTx[i]?.length ?? 0,
           error: message,
+          errorCode: 'ORIGINAL_TX_FAILED',
+          failure: createFailureGuidance('ORIGINAL_TX_FAILED', 'rebuild'),
         })
       }
     }

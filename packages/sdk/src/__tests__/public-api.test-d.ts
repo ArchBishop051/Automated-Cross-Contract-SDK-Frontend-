@@ -13,6 +13,7 @@ import type {
   WalletAdapter,
   WalletCapabilities,
   ResurrectResult,
+  ResurrectFailure,
   SorobanResurrectConfig,
   RestoreState,
   RestoreStateInfo,
@@ -149,6 +150,9 @@ test('SorobanResurrectConfig and result types keep their shape', () => {
   expectTypeOf<ResurrectResult['success']>().toEqualTypeOf<boolean>()
   expectTypeOf<ResurrectResult['archivedKeysDetected']>().toEqualTypeOf<number>()
   expectTypeOf<ResurrectResult['error']>().toEqualTypeOf<string | undefined>()
+  expectTypeOf<ResurrectResult['failure']>().toEqualTypeOf<ResurrectFailure | undefined>()
+  expectTypeOf<ResurrectFailure['retryable']>().toEqualTypeOf<boolean>()
+  expectTypeOf<ResurrectFailure['nextStep']>().toEqualTypeOf<string>()
 
   expectTypeOf<SubmitWithRestoreOptions>().toHaveProperty('transaction')
   expectTypeOf<SubmitWithRestoreOptions>().toHaveProperty('wallet')

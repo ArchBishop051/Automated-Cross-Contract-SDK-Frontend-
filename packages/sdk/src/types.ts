@@ -15,6 +15,7 @@ import type {
   HistoryEntryId,
 } from './branded-types.js'
 import type { ResurrectErrorCode } from './errors.js'
+import type { OnchainError } from './TransactionFailure.js'
 
 /** Structured logging sink accepted by the SDK. */
 export interface Logger {
@@ -405,6 +406,10 @@ export interface ResurrectResult {
    * ```
    */
   errorCode?: ResurrectErrorCode
+  /** Typed lifecycle and safe recovery guidance for a failed attempt. */
+  failure?: ResurrectFailure
+  /** Decoded on-chain cause when the RPC returned a failed transaction. */
+  onchainError?: OnchainError
   /** True when the result came from a dry-run (no transactions submitted). */
   dryRun?: boolean
   /** Detailed dry-run information (present when dryRun is true). */
@@ -421,6 +426,25 @@ export interface ResurrectResult {
    * the original transaction was accepted on the first attempt.
    */
   sequenceRetries?: number
+}
+
+/** Lifecycle stage at which a restore workflow can fail. */
+export type ResurrectFailureStage =
+  | 'simulation'
+  | 'restore'
+  | 'rebuild'
+  | 'signing'
+  | 'submission'
+  | 'confirmation'
+  | 'unknown'
+
+/** Stable, actionable metadata accompanying the readable `error` message. */
+export interface ResurrectFailure {
+  stage: ResurrectFailureStage
+  code: ResurrectErrorCode
+  retryable: boolean
+  /** Safe user-facing next step, without raw RPC or contract data. */
+  nextStep: string
 }
 
 /** Options for {@link SorobanResurrect.restoreKeys}. */
