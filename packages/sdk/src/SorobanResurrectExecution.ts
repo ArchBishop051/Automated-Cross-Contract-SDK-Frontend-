@@ -296,7 +296,9 @@ export class SorobanResurrectExecutor {
    * @param options - See {@link SubmitWithRestoreOptions}.
    * @returns {@link ResurrectResult} with outcome, hashes, and `historyId`.
    */
-  async submitWithRestore(options: SubmitWithRestoreOptions): Promise<ResurrectResult> {
+  async submitWithRestore(
+    options: SubmitWithRestoreOptions & { signal?: AbortSignal },
+  ): Promise<ResurrectResult> {
     const {
       transaction,
       wallet,
@@ -329,6 +331,7 @@ export class SorobanResurrectExecutor {
       transaction,
       wallet,
       config: effectiveConfig,
+      signal: options.signal,
 
       onSigningRestore: () => {
         stateMgr.setState('signing_restore', 'Awaiting wallet signature for restore transaction...')
@@ -354,7 +357,10 @@ export class SorobanResurrectExecutor {
       },
 
       onRestoreConfirmed: (txHash: string) => {
-        stateMgr.setState('submitting_original', 'Restore confirmed. Preparing original transaction...')
+        stateMgr.setState(
+          'submitting_original',
+          'Restore confirmed. Preparing original transaction...',
+        )
         emitter.emit('restoreConfirmed', asTxHash(txHash))
         onRestoreConfirmed?.(asTxHash(txHash))
       },

@@ -18,15 +18,15 @@ import {
   type ResurrectResult,
   type RestoreState,
   type SorobanResurrectEvents,
+  createSubscriptionStore,
+  type SubscriptionStore,
 } from '@soroban-resurrect/sdk'
 import type { Transaction } from '@stellar/stellar-sdk'
 
 /**
- * Shape of the value provided by `SorobanResurrectContext`. Not exported —
- * consumers should go through `useSorobanResurrectContext()` instead of
- * depending on this shape directly, since it may gain fields over time.
+ * Shape of the value provided by `SorobanResurrectContext`.
  */
-interface SorobanResurrectContextValue {
+export interface SorobanResurrectContextValue {
   /** The underlying SDK instance (null before first render). */
   resurrect: SorobanResurrect | null
   /** Configuration passed to the provider. */
@@ -76,14 +76,8 @@ export function useOptionalSorobanResurrectContext(): SorobanResurrectContextVal
  * individual slices via `useSyncExternalStore` without re-rendering on every
  * unrelated state change.
  */
-interface SorobanResurrectStore {
-  /** Subscribe to context-value changes. Returns an unsubscribe function. */
-  subscribe: (onStoreChange: () => void) => () => void
-  /** Read the current context value snapshot. */
-  getSnapshot: () => SorobanResurrectContextValue
-}
-
-const SorobanResurrectStoreContext = createContext<SorobanResurrectStore | null>(null)
+const SorobanResurrectStoreContext =
+  createContext<SubscriptionStore<SorobanResurrectContextValue> | null>(null)
 
 /** Props for the SorobanResurrectProvider component. */
 export interface SorobanResurrectProviderProps {
@@ -189,23 +183,15 @@ export function SorobanResurrectProvider({ config, children }: SorobanResurrectP
     on,
   }
 
-  // External store plumbing for `useSorobanResurrectSelector`. `valueRef` always
-  // holds the latest context value; listeners are notified after every commit so
-  // selector subscribers can re-read their slice and bail out when it is
-  // unchanged.
-  const valueRef = useRef(value)
-  valueRef.current = value
-  const listenersRef = useRef<Set<() => void>>(new Set())
+  const storeRef = useRef<SubscriptionStore<SorobanResurrectContextValue> | null>(null)
+  if (storeRef.current === null) {
+    storeRef.current = createSubscriptionStore(value)
+  }
+  const store = storeRef.current
+
   useEffect(() => {
-    for (const listener of listenersRef.current) listener()
-  })
-  const store = useRef<SorobanResurrectStore>({
-    subscribe: (onStoreChange: () => void) => {
-      listenersRef.current.add(onStoreChange)
-      return () => listenersRef.current.delete(onStoreChange)
-    },
-    getSnapshot: () => valueRef.current,
-  }).current
+    store.setSnapshot(value)
+  }, [store, value])
 
   return (
     <SorobanResurrectStoreContext.Provider value={store}>

@@ -60,6 +60,23 @@ function WithdrawButton() {
 }
 ```
 
+## Avoiding unrelated renders
+
+For a component that only needs one workflow field, use
+`useSorobanResurrectSelector` instead of subscribing to the entire context:
+
+```tsx
+import { useSorobanResurrectSelector } from '@soroban-resurrect/react-hook'
+
+function RestoreSpinner() {
+  const isProcessing = useSorobanResurrectSelector((value) => value.isProcessing)
+  return isProcessing ? <span>Restoring…</span> : null
+}
+```
+
+The component updates only when the selected field changes. The full context
+hook remains useful when several fields or actions are needed.
+
 ## Tips
 
 - Keep the `config` object passed to the provider/hook referentially stable (e.g. define it outside the component or memoize it) — a new object identity is compared by value, but recreating it every render still triggers the deep-equality check on every render.

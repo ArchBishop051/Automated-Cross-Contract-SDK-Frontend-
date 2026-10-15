@@ -1,5 +1,6 @@
 import { rpc, Transaction, xdr } from '@stellar/stellar-sdk'
 import type { ISorobanRpcClient } from './RpcClient.js'
+import type { StellarPublicKey } from './branded-types.js'
 import type {
   SorobanResurrectConfig,
   WalletAdapter,
@@ -11,11 +12,7 @@ import type {
   RestoreKeysOptions,
   SorobanResurrectEvents,
 } from './types.js'
-import type { ISorobanRpcClient } from './RpcClient.js'
-import type { StellarPublicKey } from './branded-types.js'
 import { resolveConfig } from './SorobanResurrectConfig.js'
-import type { ISorobanRpcClient } from './RpcClient.js'
-import type { StellarPublicKey } from './branded-types.js'
 import { SorobanResurrectStateManager } from './SorobanResurrectState.js'
 import { SorobanResurrectSimulator } from './SorobanResurrectSimulation.js'
 import { SorobanResurrectExecutor } from './SorobanResurrectExecution.js'
@@ -32,6 +29,8 @@ import type { LedgerEntryTTLInfo, QueryLedgerTTLOptions, TTLQueryResult } from '
 import { NETWORK_PRESETS } from './constants.js'
 import { watchTTL, type TTLWatchHandle, type TTLWatchOptions } from './TTLWatch.js'
 import type { SorobanNetworkName } from './constants.js'
+import { createDebugger } from './Debug.js'
+import { createRequestId } from './Logger.js'
 
 /**
  * Main facade for the Soroban-Resurrect SDK.
@@ -63,7 +62,9 @@ const debug = createDebugger('core')
 
 export class SorobanResurrect {
   private _server: ISorobanRpcClient
-  private _config: Required<Omit<SorobanResurrectConfig, 'rpcClient'>> & { rpcClient: ISorobanRpcClient }
+  private _config: Required<Omit<SorobanResurrectConfig, 'rpcClient'>> & {
+    rpcClient: ISorobanRpcClient
+  }
 
   private readonly _stateMgr: SorobanResurrectStateManager
   private readonly _simulator: SorobanResurrectSimulator
@@ -140,7 +141,9 @@ export class SorobanResurrect {
   }
 
   /** Resolved configuration with defaults applied. Re-bound in place by {@link switchNetwork}. */
-  get config(): Required<Omit<SorobanResurrectConfig, 'rpcClient'>> & { rpcClient: ISorobanRpcClient } {
+  get config(): Required<Omit<SorobanResurrectConfig, 'rpcClient'>> & {
+    rpcClient: ISorobanRpcClient
+  } {
     return this._config
   }
 
@@ -334,9 +337,10 @@ export class SorobanResurrect {
     return handle
   }
 
-  /** Stops every TTL watch started by this instance. Safe to call more than once. */
+  /** Stops every TTL watch and removes all listeners. Safe to call more than once. */
   dispose(): void {
     for (const handle of [...this._ttlWatches]) handle.stop()
+    this._stateMgr.dispose()
   }
 
   // ---------------------------------------------------------------------------
@@ -531,7 +535,9 @@ export class SorobanResurrect {
    * }
    * ```
    */
-  async submitWithRestore(options: SubmitWithRestoreOptions): Promise<ResurrectResult> {
+  async submitWithRestore(
+    options: SubmitWithRestoreOptions & { signal?: AbortSignal },
+  ): Promise<ResurrectResult> {
     this._requestId = createRequestId()
     this.logger.info('submitWithRestore: start', { requestId: this._requestId })
     try {
@@ -629,7 +635,10 @@ export class SorobanResurrect {
     keys: xdr.LedgerKey[],
     opts: QueryLedgerTTLOptions = {},
   ): Promise<TTLQueryResult> {
-    const cfg = this._config as { archiveDetectionChunkSize?: number; archiveDetectionConcurrency?: number }
+    const cfg = this._config as {
+      archiveDetectionChunkSize?: number
+      archiveDetectionConcurrency?: number
+    }
     return queryLedgerTTL(this._server, keys, {
       chunkSize: cfg.archiveDetectionChunkSize,
       concurrency: cfg.archiveDetectionConcurrency,

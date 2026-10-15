@@ -11,6 +11,8 @@
 // Main class
 // ---------------------------------------------------------------------------
 export { SorobanResurrect } from './SorobanResurrect.js'
+export { createSubscriptionStore } from './SubscriptionStore.js'
+export type { SubscriptionListener, SubscriptionStore } from './SubscriptionStore.js'
 
 // ---------------------------------------------------------------------------
 // Network presets / switching helper
