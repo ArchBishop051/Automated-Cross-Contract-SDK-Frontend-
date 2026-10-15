@@ -122,6 +122,15 @@ describe('LedgerWalletAdapter', () => {
       expect(adapter.type).toBe('ledger')
     })
 
+    it('declares the capabilities supported by the Ledger Stellar app', () => {
+      const adapter = new LedgerWalletAdapter(config)
+      expect(adapter.capabilities).toEqual({
+        signAuthEntry: false,
+        feeBump: true,
+        hardware: true,
+      })
+    })
+
     it('defaults accountIndex to 0', () => {
       const adapter = new LedgerWalletAdapter()
       expect(adapter.type).toBe('ledger')
@@ -298,6 +307,15 @@ describe('TrezorWalletAdapter', () => {
     it('has type "trezor"', () => {
       const adapter = new TrezorWalletAdapter(config)
       expect(adapter.type).toBe('trezor')
+    })
+
+    it('declares the capabilities supported by Trezor Connect', () => {
+      const adapter = new TrezorWalletAdapter(config)
+      expect(adapter.capabilities).toEqual({
+        signAuthEntry: false,
+        feeBump: true,
+        hardware: true,
+      })
     })
 
     it('defaults accountIndex to 0', () => {
