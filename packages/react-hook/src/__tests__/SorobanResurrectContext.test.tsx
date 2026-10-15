@@ -6,6 +6,7 @@ import { SorobanResurrect } from '@soroban-resurrect/sdk'
 
 const mockOnStateChange = vi.fn()
 const mockReset = vi.fn()
+const mockDispose = vi.fn()
 const mockDetectArchivedKeys = vi.fn()
 const mockSubmitWithRestore = vi.fn()
 
@@ -15,6 +16,7 @@ vi.mock('@soroban-resurrect/sdk', () => ({
   SorobanResurrect: vi.fn().mockImplementation(() => ({
     onStateChange: mockOnStateChange,
     reset: mockReset,
+    dispose: mockDispose,
     detectArchivedKeys: mockDetectArchivedKeys,
     submitWithRestore: mockSubmitWithRestore,
     config: { rpcUrl: 'https://test' },
