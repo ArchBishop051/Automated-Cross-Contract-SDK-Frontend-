@@ -79,6 +79,11 @@ export class SorobanResurrectExecutor {
     return this._historyPersistence?.hydrated ?? Promise.resolve()
   }
 
+  /** Stops history persistence when this executor is no longer in use. */
+  dispose(): void {
+    this._historyPersistence?.detach()
+  }
+
   /**
    * Re-binds this executor to a new RPC client / config in place, keeping
    * history and the state manager intact. Used by `SorobanResurrect.switchNetwork`.

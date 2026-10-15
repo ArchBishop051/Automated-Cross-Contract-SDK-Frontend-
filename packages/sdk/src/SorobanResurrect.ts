@@ -334,9 +334,14 @@ export class SorobanResurrect {
     return handle
   }
 
-  /** Stops every TTL watch started by this instance. Safe to call more than once. */
+  /**
+   * Stops TTL watches and detaches history persistence. Safe to call more than
+   * once; the SDK instance may still be used, but history changes are no
+   * longer written to storage.
+   */
   dispose(): void {
     for (const handle of [...this._ttlWatches]) handle.stop()
+    this._executor.dispose()
   }
 
   // ---------------------------------------------------------------------------
