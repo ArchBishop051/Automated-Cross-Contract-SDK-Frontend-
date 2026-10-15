@@ -429,6 +429,8 @@ export type SubmitLifecyclePhase =
   | 'restore_confirmed'
   | 'original_submission_started'
   | 'original_submitted'
+  | 'original_confirmation_started'
+  | 'original_confirmed'
   | 'completed'
   | 'failed';
 
@@ -457,7 +459,8 @@ export interface SubmitWithRestoreOptions {
   onRestoreFailed?: (error: string) => void;
   /**
    * Called for each typed workflow phase, including simulation, restore
-   * preparation/submission/confirmation, original submission, and completion.
+   * preparation/submission/confirmation, original submission/confirmation,
+   * and completion.
    * The same payloads are published through `sdk.on('workflowLifecycle', ...)`.
    */
   onLifecycleEvent?: (event: SubmitLifecycleEvent) => void;

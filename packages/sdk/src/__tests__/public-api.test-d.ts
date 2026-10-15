@@ -205,4 +205,7 @@ test('recovery policies and lifecycle types are stable public types', () => {
   expectTypeOf<SubmitRetryOptions>().toHaveProperty('maxRetries')
   expectTypeOf<SubmitLifecycleEvent['phase']>().toMatchTypeOf<string>()
   expectTypeOf<SubmitWithRestoreOptions>().toHaveProperty('requestId')
+  expectTypeOf<SubmitWithRestoreOptions>().toHaveProperty('confirmationPolicy')
+  expectTypeOf<SubmitWithRestoreOptions>().toHaveProperty('confirmationTimeoutMs')
+  expectTypeOf<SubmitWithRestoreOptions>().toHaveProperty('confirmationTimeoutBehavior')
 })

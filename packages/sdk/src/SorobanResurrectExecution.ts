@@ -403,7 +403,6 @@ export class SorobanResurrectExecutor {
       },
 
       onOriginalSubmitted: (txHash: TxHash) => {
-        stateMgr.setState('success', 'Original transaction submitted successfully')
         emitter.emit('originalSubmitted', asTxHash(txHash))
         onOriginalSubmitted?.(asTxHash(txHash))
       },
@@ -424,6 +423,12 @@ export class SorobanResurrectExecutor {
     if (!finalResult.success) {
       stateMgr.setError(finalResult.error ?? 'Unknown error')
       emitter.emit('error', finalResult.error ?? 'Unknown error')
+    } else {
+      const message =
+        finalResult.confirmationStatus === 'submitted'
+          ? 'Original transaction submitted successfully'
+          : 'Original transaction confirmed successfully'
+      stateMgr.setState('success', message)
     }
 
     emitLifecycle({
@@ -487,15 +492,19 @@ export class SorobanResurrectExecutor {
       onSigningOriginal: () => {
         stateMgr.setState('signing_original', 'Signing original transaction...')
       },
-      onOriginalSubmitted: (_txHash: string) => {
-        stateMgr.setState('success', 'Original transaction submitted successfully')
-      },
     })
 
     this._history.update(id, result)
 
     if (!result.success) {
       stateMgr.setError(result.error ?? 'Unknown error')
+    } else {
+      stateMgr.setState(
+        'success',
+        result.confirmationStatus === 'submitted'
+          ? 'Original transaction submitted successfully'
+          : 'Original transaction confirmed successfully',
+      )
     }
 
     return result

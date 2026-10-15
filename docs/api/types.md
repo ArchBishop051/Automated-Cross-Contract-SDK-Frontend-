@@ -90,6 +90,8 @@ const unsubscribe = sr.on('workflowLifecycle', (event) => {
     case 'restore_confirmed':
     case 'original_submission_started':
     case 'original_submitted':
+    case 'original_confirmation_started':
+    case 'original_confirmed':
     case 'completed':
     case 'failed':
       updateProgress(event)
@@ -124,6 +126,50 @@ first call's result; callbacks are invoked only for the call that started the
 flow. Calls without `requestId` retain the prior, non-deduplicated behavior.
 An empty or whitespace-only id returns a validation error without starting a
 workflow.
+
+### Confirmation policy and timeout
+
+The default, `confirmationPolicy: 'wait-for-finality'`, waits until Soroban RPC
+reports a terminal `SUCCESS` or `FAILED` status for the original transaction.
+Successful results include `confirmationStatus: 'confirmed'`. This waits for
+the ledger outcome rather than merely the RPC submission acknowledgment; it can
+add polling latency and remains subject to the configured timeout.
+
+Set `confirmationPolicy: 'return-on-submission'` to return after the RPC accepts
+the original transaction. This yields `success: true` with
+`confirmationStatus: 'submitted'`; it does **not** establish whether the
+transaction later succeeds or fails. A required restore transaction is always
+confirmed before the original transaction is rebuilt and submitted.
+
+`confirmationTimeoutMs` overrides the configured `pollTimeoutMs` for restore
+and original transaction confirmation. On timeout the default behavior returns
+`success: false`, `errorCode: 'CONFIRMATION_TIMEOUT'`, and the submitted hash
+without claiming an on-chain failure. Set
+`confirmationTimeoutBehavior: 'return-pending'` to additionally report
+`confirmationStatus: 'pending'`:
+
+```ts
+const result = await sr.submitWithRestore({
+  transaction,
+  wallet,
+  confirmationTimeoutMs: 90_000,
+  confirmationTimeoutBehavior: 'return-pending',
+})
+
+if (result.confirmationStatus === 'pending') {
+  // The outcome is unknown; inspect the hash or resume polling.
+  console.log(result.originalTxHash ?? result.restoreTxHash)
+}
+```
+
+When RPC reports a terminal `FAILED` status, the result instead uses
+`ORIGINAL_TX_FAILED` (or `RESTORE_TX_FAILED` for a restore failure) and includes
+decoded `onchainError` information when available.
+
+Restore workflows now wait for the original transaction's terminal status
+before reporting success, correcting the former early-return behavior for that
+path. Applications that relied on the earlier return can opt into
+`return-on-submission`.
 
 ## `SorobanResurrectNetwork`
 

@@ -16,6 +16,8 @@ import type {
   ResurrectResult,
   DryRunResult,
   SubmitLifecycleEvent,
+  ConfirmationPolicy,
+  ConfirmationTimeoutBehavior,
 } from './types.js'
 import { WalletError } from './types.js'
 import type { ResurrectErrorCode } from './errors.js'
@@ -43,6 +45,7 @@ import {
   DEFAULT_MAX_SEQUENCE_RETRIES,
 } from './constants.js'
 import { asTxHash, asXdrBase64, type TxHash, type XdrBase64 } from './branded-types.js'
+import { parseTransactionFailure } from './TransactionFailure.js'
 
 /** Parameters for the full restore-and-submit execution flow. */
 export interface ExecuteParams {
@@ -80,6 +83,12 @@ export interface ExecuteParams {
   feeBumpConfig?: FeeBumpConfig
   /** Optional cache for simulation results. */
   simulationCache?: SimulationCache
+  /** Confirmation policy for the original transaction. */
+  confirmationPolicy?: ConfirmationPolicy
+  /** Per-request confirmation polling timeout. */
+  confirmationTimeoutMs?: number
+  /** Behavior when confirmation polling reaches its timeout. */
+  confirmationTimeoutBehavior?: ConfirmationTimeoutBehavior
 }
 
 async function validateWalletNetwork(
@@ -198,8 +207,9 @@ async function waitForTx(
   server: ISorobanRpcClient,
   hash: TxHash | string,
   config: SorobanResurrectConfig,
+  timeoutMs?: number,
 ): Promise<rpc.Api.GetTransactionResponse> {
-  const pollTimeout = config.pollTimeoutMs ?? POLL_TIMEOUT_MS
+  const pollTimeout = timeoutMs ?? config.pollTimeoutMs ?? POLL_TIMEOUT_MS
 
   if (config.useSSE) {
     return waitForTransactionSSE(server, hash, pollTimeout, config.rpcUrl)
@@ -207,6 +217,10 @@ async function waitForTx(
 
   const pollInterval = config.pollIntervalMs ?? POLL_INTERVAL_MS
   return waitForTransaction(server, hash, pollInterval, pollTimeout)
+}
+
+function isConfirmationTimeout(error: unknown): error is Error {
+  return error instanceof Error && /did not complete within \d+ms/i.test(error.message)
 }
 
 /**
@@ -257,15 +271,32 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
     onSubmittingRestore,
     feeBumpConfig,
     simulationCache,
+    confirmationPolicy,
+    confirmationTimeoutMs,
+    confirmationTimeoutBehavior,
   } = params
 
   const networkPassphrase = config.networkPassphrase ?? DEFAULT_NETWORK_PASSPHRASE
 
   const onSigningOriginal = params.onSigningOriginal
-  const pollInterval = config.pollIntervalMs ?? POLL_INTERVAL_MS
   const pollTimeout = config.pollTimeoutMs ?? POLL_TIMEOUT_MS
+  const effectiveConfirmationTimeout = confirmationTimeoutMs ?? pollTimeout
+  const effectiveConfirmationPolicy = confirmationPolicy ?? 'wait-for-finality'
+  const effectiveTimeoutBehavior = confirmationTimeoutBehavior ?? 'error'
 
   try {
+    if (!['wait-for-finality', 'return-on-submission'].includes(effectiveConfirmationPolicy)) {
+      throw new Error(`Invalid confirmationPolicy: ${String(effectiveConfirmationPolicy)}`)
+    }
+    if (!['error', 'return-pending'].includes(effectiveTimeoutBehavior)) {
+      throw new Error(
+        `Invalid confirmationTimeoutBehavior: ${String(effectiveTimeoutBehavior)}`,
+      )
+    }
+    if (!Number.isFinite(effectiveConfirmationTimeout) || effectiveConfirmationTimeout <= 0) {
+      throw new Error('confirmationTimeoutMs must be a finite positive number')
+    }
+
     await validateWalletNetwork(wallet, networkPassphrase)
     onLifecycleEvent?.({ phase: 'simulation_started', requestId })
     const simResponse = await simulateWithCache(server, originalTx, simulationCache)
@@ -345,10 +376,32 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
         requestId,
         transactionHash: restoreHash,
       })
-      const restoreStatus = await waitForTransaction(server, restoreHash, pollInterval, pollTimeout)
+      let restoreStatus: rpc.Api.GetTransactionResponse
+      try {
+        restoreStatus = await waitForTx(
+          server,
+          restoreHash,
+          config,
+          effectiveConfirmationTimeout,
+        )
+      } catch (error) {
+        if (!isConfirmationTimeout(error)) throw error
+        const pending = effectiveTimeoutBehavior === 'return-pending'
+        const message = error.message
+        onRestoreFailed?.(message)
+        return {
+          success: false,
+          archivedKeysDetected: archivedKeys.length,
+          restoreTxHash: restoreHash,
+          error: message,
+          errorCode: 'CONFIRMATION_TIMEOUT',
+          ...(pending ? { confirmationStatus: 'pending' as const } : {}),
+        }
+      }
 
       if (restoreStatus.status !== rpc.Api.GetTransactionStatus.SUCCESS) {
         const err = 'Restore transaction failed'
+        const onchainError = parseTransactionFailure(restoreStatus)
         onRestoreFailed?.(err)
         return {
           success: false,
@@ -356,6 +409,7 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
           restoreTxHash: restoreHash,
           error: err,
           errorCode: 'RESTORE_TX_FAILED',
+          onchainError,
         }
       }
 
@@ -431,12 +485,71 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
         transactionHash: originalHash,
       })
 
+      if (effectiveConfirmationPolicy === 'return-on-submission') {
+        return {
+          success: true,
+          originalTxHash: originalHash,
+          restoreTxHash: restoreHash,
+          archivedKeysDetected: archivedKeys.length,
+          sequenceRetries,
+          confirmationStatus: 'submitted',
+        }
+      }
+
+      onLifecycleEvent?.({
+        phase: 'original_confirmation_started',
+        requestId,
+        transactionHash: originalHash,
+      })
+      let originalStatus: rpc.Api.GetTransactionResponse
+      try {
+        originalStatus = await waitForTx(
+          server,
+          originalHash,
+          config,
+          effectiveConfirmationTimeout,
+        )
+      } catch (error) {
+        if (!isConfirmationTimeout(error)) throw error
+        const pending = effectiveTimeoutBehavior === 'return-pending'
+        return {
+          success: false,
+          originalTxHash: originalHash,
+          restoreTxHash: restoreHash,
+          archivedKeysDetected: archivedKeys.length,
+          error: error.message,
+          errorCode: 'CONFIRMATION_TIMEOUT',
+          ...(pending ? { confirmationStatus: 'pending' as const } : {}),
+          sequenceRetries,
+        }
+      }
+
+      if (originalStatus.status !== rpc.Api.GetTransactionStatus.SUCCESS) {
+        const onchainError = parseTransactionFailure(originalStatus)
+        return {
+          success: false,
+          originalTxHash: originalHash,
+          restoreTxHash: restoreHash,
+          archivedKeysDetected: archivedKeys.length,
+          error: 'Original transaction failed on-chain',
+          errorCode: 'ORIGINAL_TX_FAILED',
+          onchainError,
+          sequenceRetries,
+        }
+      }
+
+      onLifecycleEvent?.({
+        phase: 'original_confirmed',
+        requestId,
+        transactionHash: originalHash,
+      })
       return {
         success: true,
         originalTxHash: originalHash,
         restoreTxHash: restoreHash,
         archivedKeysDetected: archivedKeys.length,
         sequenceRetries,
+        confirmationStatus: 'confirmed',
       }
     }
 
@@ -471,22 +584,59 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
         transactionHash: hash,
       })
 
-      // Wait for confirmation on success path for consistency with restore path
-      const txStatus = await waitForTx(server, hash, config)
-
-      if (txStatus.status !== rpc.Api.GetTransactionStatus.SUCCESS) {
+      if (effectiveConfirmationPolicy === 'return-on-submission') {
         return {
-          success: false,
+          success: true,
+          originalTxHash: hash,
           archivedKeysDetected: 0,
-          error: 'Transaction failed to confirm',
-          errorCode: 'ORIGINAL_TX_FAILED',
+          confirmationStatus: 'submitted',
         }
       }
 
+      // Wait for confirmation on success path for consistency with restore path
+      onLifecycleEvent?.({
+        phase: 'original_confirmation_started',
+        requestId,
+        transactionHash: hash,
+      })
+      let txStatus: rpc.Api.GetTransactionResponse
+      try {
+        txStatus = await waitForTx(server, hash, config, effectiveConfirmationTimeout)
+      } catch (error) {
+        if (!isConfirmationTimeout(error)) throw error
+        const pending = effectiveTimeoutBehavior === 'return-pending'
+        return {
+          success: false,
+          archivedKeysDetected: 0,
+          originalTxHash: hash,
+          error: error.message,
+          errorCode: 'CONFIRMATION_TIMEOUT',
+          ...(pending ? { confirmationStatus: 'pending' as const } : {}),
+        }
+      }
+
+      if (txStatus.status !== rpc.Api.GetTransactionStatus.SUCCESS) {
+        const onchainError = parseTransactionFailure(txStatus)
+        return {
+          success: false,
+          archivedKeysDetected: 0,
+          originalTxHash: hash,
+          error: 'Transaction failed to confirm',
+          errorCode: 'ORIGINAL_TX_FAILED',
+          onchainError,
+        }
+      }
+
+      onLifecycleEvent?.({
+        phase: 'original_confirmed',
+        requestId,
+        transactionHash: hash,
+      })
       return {
         success: true,
         originalTxHash: hash,
         archivedKeysDetected: 0,
+        confirmationStatus: 'confirmed',
       }
     }
 
