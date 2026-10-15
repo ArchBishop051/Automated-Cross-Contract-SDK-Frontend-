@@ -98,6 +98,13 @@ function WithdrawButton() {
 }
 ```
 
+## Choosing an approach
+
+If you already use Soroban RPC and only need a single, application-specific
+restore flow, you may prefer to maintain that small flow yourself. See
+[Manual restore flow vs. the SDK](/guide/comparison) for the trade-offs,
+dependencies, and bundle-size measurement command.
+
 ## Next Steps
 
 - Walk through common patterns in the [Tutorial](/guide/tutorial)
