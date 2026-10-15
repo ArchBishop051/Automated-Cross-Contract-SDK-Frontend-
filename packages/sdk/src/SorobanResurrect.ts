@@ -32,6 +32,7 @@ import type { LedgerEntryTTLInfo, QueryLedgerTTLOptions, TTLQueryResult } from '
 import { NETWORK_PRESETS } from './constants.js'
 import { watchTTL, type TTLWatchHandle, type TTLWatchOptions } from './TTLWatch.js'
 import type { SorobanNetworkName } from './constants.js'
+import type { AbortSignalOptions } from './AbortUtils.js'
 
 /**
  * Main facade for the Soroban-Resurrect SDK.
@@ -351,8 +352,11 @@ export class SorobanResurrect {
    * @returns The raw simulation response from the RPC server.
    * @see {@link detectArchivedKeys} for a higher-level check.
    */
-  async simulate(transaction: Transaction): Promise<rpc.Api.SimulateTransactionResponse> {
-    return this._simulator.simulate(transaction)
+  async simulate(
+    transaction: Transaction,
+    options: AbortSignalOptions = {},
+  ): Promise<rpc.Api.SimulateTransactionResponse> {
+    return this._simulator.simulate(transaction, options)
   }
 
   /**
@@ -373,8 +377,11 @@ export class SorobanResurrect {
    * }
    * ```
    */
-  async detectArchivedKeys(transaction: Transaction): Promise<ArchivedLedgerEntry[]> {
-    const keys = await this._simulator.detectArchivedKeys(transaction)
+  async detectArchivedKeys(
+    transaction: Transaction,
+    options: AbortSignalOptions = {},
+  ): Promise<ArchivedLedgerEntry[]> {
+    const keys = await this._simulator.detectArchivedKeys(transaction, options)
     this._standaloneArchivedKeys = keys
     return keys
   }
@@ -393,8 +400,11 @@ export class SorobanResurrect {
    * }
    * ```
    */
-  async needsRestore(transaction: Transaction): Promise<boolean> {
-    return this._simulator.needsRestore(transaction)
+  async needsRestore(
+    transaction: Transaction,
+    options: AbortSignalOptions = {},
+  ): Promise<boolean> {
+    return this._simulator.needsRestore(transaction, options)
   }
 
   /**
@@ -404,8 +414,13 @@ export class SorobanResurrect {
    * @param transactions - Transactions to inspect.
    * @returns Array of archived-key arrays, one entry per transaction.
    */
-  async detectArchivedKeysBatch(transactions: Transaction[]): Promise<ArchivedLedgerEntry[][]> {
-    return Promise.all(transactions.map((tx) => this._simulator.detectArchivedKeys(tx)))
+  async detectArchivedKeysBatch(
+    transactions: Transaction[],
+    options: AbortSignalOptions = {},
+  ): Promise<ArchivedLedgerEntry[][]> {
+    return Promise.all(
+      transactions.map((tx) => this._simulator.detectArchivedKeys(tx, options)),
+    )
   }
 
   /**
@@ -428,8 +443,11 @@ export class SorobanResurrect {
    * }
    * ```
    */
-  async estimateRestoreCost(transaction: Transaction): Promise<RestoreCostEstimate> {
-    const response = await this._simulator.simulate(transaction)
+  async estimateRestoreCost(
+    transaction: Transaction,
+    options: AbortSignalOptions = {},
+  ): Promise<RestoreCostEstimate> {
+    const response = await this._simulator.simulate(transaction, options)
 
     if (isRestoreResponse(response)) {
       const archivedKeys = extractArchivedKeys(response)
@@ -463,8 +481,9 @@ export class SorobanResurrect {
     sourcePublicKey: StellarPublicKey | string,
     transaction: Transaction,
     simulationResponse?: rpc.Api.SimulateTransactionRestoreResponse,
+    options: AbortSignalOptions = {},
   ): Promise<Transaction> {
-    return this._executor.buildRestoreTx(sourcePublicKey, transaction, simulationResponse)
+    return this._executor.buildRestoreTx(sourcePublicKey, transaction, simulationResponse, options)
   }
 
   /**
@@ -490,8 +509,9 @@ export class SorobanResurrect {
   async buildBatchRestoreTx(
     sourcePublicKey: StellarPublicKey | string,
     transactions: Transaction[],
+    options: AbortSignalOptions = {},
   ): Promise<Transaction | null> {
-    return this._executor.buildBatchRestoreTx(sourcePublicKey, transactions)
+    return this._executor.buildBatchRestoreTx(sourcePublicKey, transactions, options)
   }
 
   /**
@@ -502,8 +522,12 @@ export class SorobanResurrect {
    * @param wallet      - Wallet adapter used for signing.
    * @returns Result with transaction hash on success.
    */
-  async sendTransaction(transaction: Transaction, wallet: WalletAdapter): Promise<ResurrectResult> {
-    return this._executor.sendTransaction(transaction, wallet)
+  async sendTransaction(
+    transaction: Transaction,
+    wallet: WalletAdapter,
+    options: AbortSignalOptions = {},
+  ): Promise<ResurrectResult> {
+    return this._executor.sendTransaction(transaction, wallet, options)
   }
 
   /**
@@ -531,7 +555,9 @@ export class SorobanResurrect {
    * }
    * ```
    */
-  async submitWithRestore(options: SubmitWithRestoreOptions): Promise<ResurrectResult> {
+  async submitWithRestore(
+    options: SubmitWithRestoreOptions & AbortSignalOptions,
+  ): Promise<ResurrectResult> {
     this._requestId = createRequestId()
     this.logger.info('submitWithRestore: start', { requestId: this._requestId })
     try {
@@ -558,8 +584,12 @@ export class SorobanResurrect {
    * @returns Result of the retry attempt.
    * @throws {Error} If no history entry exists for `entryId`.
    */
-  async retry(entryId: string, wallet: WalletAdapter): Promise<ResurrectResult> {
-    return this._executor.retry(entryId, wallet)
+  async retry(
+    entryId: string,
+    wallet: WalletAdapter,
+    options: AbortSignalOptions = {},
+  ): Promise<ResurrectResult> {
+    return this._executor.retry(entryId, wallet, options)
   }
 
   /**
@@ -576,8 +606,11 @@ export class SorobanResurrect {
    * @param items - Array of `SubmitWithRestoreOptions`, one per transaction.
    * @returns Array of results in the same order as the input.
    */
-  async submitBatchWithRestore(items: SubmitWithRestoreOptions[]): Promise<ResurrectResult[]> {
-    return this._executor.submitBatchWithRestore(items)
+  async submitBatchWithRestore(
+    items: SubmitWithRestoreOptions[],
+    options: AbortSignalOptions = {},
+  ): Promise<ResurrectResult[]> {
+    return this._executor.submitBatchWithRestore(items, options)
   }
 
   /**
@@ -604,7 +637,7 @@ export class SorobanResurrect {
   async restoreKeys(
     keys: xdr.LedgerKey[],
     wallet: WalletAdapter,
-    opts?: RestoreKeysOptions,
+    opts: RestoreKeysOptions & AbortSignalOptions = {},
   ): Promise<ResurrectResult> {
     return this._executor.restoreKeys(keys, wallet, opts)
   }

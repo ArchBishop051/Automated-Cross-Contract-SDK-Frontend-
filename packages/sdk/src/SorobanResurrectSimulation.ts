@@ -4,6 +4,7 @@ import { SimulationCache } from './SimulationCache.js'
 import { isRestoreResponse, isSuccessResponse, isErrorResponse, extractArchivedKeys } from './Archiver.js'
 import { SorobanResurrectStateManager } from './SorobanResurrectState.js'
 import type { ISorobanRpcClient } from './RpcClient.js'
+import { runWithSignal, throwIfAborted, type AbortSignalOptions } from './AbortUtils.js'
 
 /**
  * Handles transaction simulation and archived-entry detection for a single
@@ -71,7 +72,12 @@ export class SorobanResurrectSimulator {
    * @param transaction - The transaction to simulate.
    * @returns The raw simulation response (success, error, or restore-required).
    */
-  async simulate(transaction: Transaction): Promise<rpc.Api.SimulateTransactionResponse> {
+  async simulate(
+    transaction: Transaction,
+    options: AbortSignalOptions = {},
+  ): Promise<rpc.Api.SimulateTransactionResponse> {
+    const { signal } = options
+    throwIfAborted(signal)
     if (this._cache) {
       const cached = this._cache.get(transaction)
       if (cached) return cached
@@ -79,7 +85,10 @@ export class SorobanResurrectSimulator {
 
     this._stateMgr.setState('simulating', 'Simulating transaction...')
 
-    const response = await this._server.simulateTransaction(transaction)
+    const response = await runWithSignal(
+      () => this._server.simulateTransaction(transaction),
+      signal,
+    )
 
     if (this._cache) {
       this._cache.set(transaction, response)
@@ -99,15 +108,19 @@ export class SorobanResurrectSimulator {
    * @param transaction - The transaction whose footprint to inspect.
    * @returns Array of archived ledger entries; empty if none detected or on error.
    */
-  async detectArchivedKeys(transaction: Transaction): Promise<ArchivedLedgerEntry[]> {
+  async detectArchivedKeys(
+    transaction: Transaction,
+    options: AbortSignalOptions = {},
+  ): Promise<ArchivedLedgerEntry[]> {
     const method = this._config.archiveDetectionMethod ?? 'simulation'
 
     try {
       if (method === 'direct') {
-        return await this._detectViaDirect(transaction)
+        return await runWithSignal(() => this._detectViaDirect(transaction), options.signal)
       }
-      return await this._detectViaSimulation(transaction)
+      return await this._detectViaSimulation(transaction, options)
     } catch (err) {
+      if (options.signal?.aborted) throw err
       console.warn('SorobanResurrect: archive detection error:', err)
       return []
     }
@@ -120,8 +133,11 @@ export class SorobanResurrectSimulator {
    * @param transaction - The transaction to check.
    * @returns `true` if restoration is required before submission.
    */
-  async needsRestore(transaction: Transaction): Promise<boolean> {
-    const keys = await this.detectArchivedKeys(transaction)
+  async needsRestore(
+    transaction: Transaction,
+    options: AbortSignalOptions = {},
+  ): Promise<boolean> {
+    const keys = await this.detectArchivedKeys(transaction, options)
     return keys.length > 0
   }
 
@@ -139,8 +155,11 @@ export class SorobanResurrectSimulator {
    * `config.archiveDetectionFallback` is not explicitly disabled, falls back
    * to the `'direct'` strategy so archived entries aren't silently missed.
    */
-  private async _detectViaSimulation(transaction: Transaction): Promise<ArchivedLedgerEntry[]> {
-    const response = await this.simulate(transaction)
+  private async _detectViaSimulation(
+    transaction: Transaction,
+    options: AbortSignalOptions,
+  ): Promise<ArchivedLedgerEntry[]> {
+    const response = await this.simulate(transaction, options)
 
     if (isRestoreResponse(response)) {
       return extractArchivedKeys(response)
@@ -160,7 +179,7 @@ export class SorobanResurrectSimulator {
         "falling back to the 'direct' archive detection strategy. " +
         'Set archiveDetectionFallback: false to disable this and pin a strategy explicitly.',
     )
-    return this._detectViaDirect(transaction)
+    return runWithSignal(() => this._detectViaDirect(transaction), options.signal)
   }
 
   /**
