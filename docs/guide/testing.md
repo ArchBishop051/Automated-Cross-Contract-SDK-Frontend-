@@ -118,7 +118,9 @@ clean) plus two `sendTransaction` responses (restore, then original) — is
 enough to drive the entire state machine (`restore_needed` →
 `signing_restore` → `submitting_restore` → `confirming_restore` →
 `signing_original` → `submitting_original` → `success`) deterministically,
-with no network access.
+with no network access. A full workflow test should also verify that rebuilding
+preserves the original operations and that each submitted envelope matches the
+XDR returned by its corresponding wallet-signing call.
 
 Wallet-rejection integration tests should cover both signing prompts
 separately: rejecting the restore signature must send neither transaction,

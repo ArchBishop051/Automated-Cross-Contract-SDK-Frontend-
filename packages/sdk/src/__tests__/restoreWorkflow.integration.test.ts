@@ -140,6 +140,7 @@ describe('full restore workflow integration', () => {
   it('drives the full restore-and-resubmit workflow through executeWithRestore in the correct order', async () => {
     const server = makeIntegrationServer(callLog)
     const wallet = makeWallet()
+    const originalTx = makeSampleTx()
 
     const onRestoreNeeded = vi.fn()
     const onSigningRestore = vi.fn()
@@ -152,7 +153,7 @@ describe('full restore workflow integration', () => {
 
     const result = await executeWithRestore({
       server,
-      transaction: makeSampleTx(),
+      transaction: originalTx,
       wallet,
       config: defaultConfig,
       onRestoreNeeded,
@@ -188,6 +189,21 @@ describe('full restore workflow integration', () => {
 
     // Wallet signs both the restore and the rebuilt original transaction.
     expect(wallet.signTransaction).toHaveBeenCalledTimes(2)
+    expect(server.simulateTransaction).toHaveBeenCalledTimes(2)
+
+    const rebuiltOriginal = vi.mocked(server.simulateTransaction).mock.calls[1][0]
+    expect(rebuiltOriginal).toBeInstanceOf(Transaction)
+    if (rebuiltOriginal instanceof Transaction) {
+      expect(rebuiltOriginal.operations.map((operation) => operation.type)).toEqual(
+        originalTx.operations.map((operation) => operation.type),
+      )
+    }
+
+    // Each submitted envelope must be the exact envelope returned by the
+    // corresponding wallet-signing call, in restore-then-original order.
+    expect(vi.mocked(server.sendTransaction).mock.calls.map(([tx]) => tx.toXDR())).toEqual(
+      vi.mocked(wallet.signTransaction).mock.calls.map(([signedXdr]) => signedXdr),
+    )
 
     // Callbacks fire in the expected order with the right payloads.
     expect(onRestoreNeeded).toHaveBeenCalledWith([
