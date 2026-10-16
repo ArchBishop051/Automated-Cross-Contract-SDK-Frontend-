@@ -1,5 +1,8 @@
 import { Logger, NOOP_LOGGER, resolveLogger } from './logger';
 
+/** Allows event maps to satisfy index-signature constrained emitter APIs. */
+export type WithIndexSignature<T> = T & Record<string, (...args: any[]) => void>;
+
 /**
  * Options accepted by {@link TypedEventEmitter}.
  */

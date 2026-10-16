@@ -52,10 +52,15 @@ export type ResurrectErrorCode =
   | 'ORIGINAL_TX_PARSE_FAILED'
 
   /**
-   * The submitted original transaction did not reach `SUCCESS` status
-   * within the polling timeout.
+   * The submitted original transaction reached a terminal `FAILED` status.
    */
   | 'ORIGINAL_TX_FAILED'
+
+  /**
+   * Transaction confirmation polling timed out before a terminal status.
+   * Inspect the transaction hash; the network outcome may still be pending.
+   */
+  | 'CONFIRMATION_TIMEOUT'
 
   /**
    * The simulation response was not a recognised type (not success, error,
@@ -76,6 +81,7 @@ export type ResurrectErrorCode =
    * Check `result.error` for the exception message.
    */
   | 'UNKNOWN_ERROR'
+  | 'RESTORE_FEE_CAP_EXCEEDED'
 
   /**
    * The caller aborted the workflow. A transaction already submitted to the

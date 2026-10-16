@@ -15,6 +15,9 @@ import type {
   ArchivedLedgerEntry,
   ResurrectResult,
   DryRunResult,
+  SubmitLifecycleEvent,
+  ConfirmationPolicy,
+  ConfirmationTimeoutBehavior,
 } from './types.js'
 import { WalletError } from './types.js'
 import type { ResurrectErrorCode } from './errors.js'
@@ -75,6 +78,20 @@ export interface ExecuteParams extends AbortSignalOptions {
   onRestoreFailed?: (error: string) => void
   /** Called when a fee-bump sponsor is about to sign a transaction. */
   onSigningFeeBump?: () => void
+  /** Called when a lifecycle phase is reached. */
+  onLifecycleEvent?: (event: SubmitLifecycleEvent) => void
+  /** Optional caller correlation id attached to lifecycle events. */
+  requestId?: string
+  /** Optional sponsor fee-bump configuration. */
+  feeBumpConfig?: FeeBumpConfig
+  /** Optional cache for simulation results. */
+  simulationCache?: SimulationCache
+  /** Confirmation policy for the original transaction. */
+  confirmationPolicy?: ConfirmationPolicy
+  /** Per-request confirmation polling timeout. */
+  confirmationTimeoutMs?: number
+  /** Behavior when confirmation polling reaches its timeout. */
+  confirmationTimeoutBehavior?: ConfirmationTimeoutBehavior
 }
 
 async function validateWalletNetwork(
@@ -227,6 +244,10 @@ async function waitForTx(
   return waitForTransaction(server, hash, pollInterval, pollTimeout, { signal })
 }
 
+function isConfirmationTimeout(error: unknown): error is Error {
+  return error instanceof Error && /did not complete within \d+ms/i.test(error.message)
+}
+
 /**
  * Executes the full restore-and-submit workflow:
  *
@@ -275,17 +296,7 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
 
   const networkPassphrase = config.networkPassphrase ?? DEFAULT_NETWORK_PASSPHRASE
 
-  // Extract optional fields that may not be destructured from params
-  const onSigningRestore = (params as ExecuteParams & { onSigningRestore?: () => void })
-    .onSigningRestore
-  const onSubmittingRestore = (params as ExecuteParams & { onSubmittingRestore?: () => void })
-    .onSubmittingRestore
-  const onSigningOriginal = (params as ExecuteParams & { onSigningOriginal?: () => void })
-    .onSigningOriginal
-  const feeBumpConfig = (params as ExecuteParams & { feeBumpConfig?: FeeBumpConfig }).feeBumpConfig
-  const simulationCache = (params as ExecuteParams & { simulationCache?: SimulationCache })
-    .simulationCache
-  const pollInterval = config.pollIntervalMs ?? POLL_INTERVAL_MS
+  const onSigningOriginal = params.onSigningOriginal
   const pollTimeout = config.pollTimeoutMs ?? POLL_TIMEOUT_MS
   let archivedKeysDetected = 0
   let restoreTxHash: TxHash | undefined
@@ -306,6 +317,11 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
       const archivedKeys = extractArchivedKeys(simResponse)
       archivedKeysDetected = archivedKeys.length
       debug('executeWithRestore: restore required for %d entries', archivedKeys.length)
+      onLifecycleEvent?.({
+        phase: 'restore_preparation_started',
+        requestId,
+        archivedKeys,
+      })
 
       const isConnected = await runWithSignal(() => wallet.isConnected(), signal)
       if (!isConnected) {
@@ -373,13 +389,13 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
         const err = 'Restore transaction failed'
         const onchainError = parseTransactionFailure(restoreStatus)
         onRestoreFailed?.(err)
-        const diagnostics = parseTransactionDiagnostics(restoreStatus)
         return {
           success: false,
           archivedKeysDetected: archivedKeys.length,
           restoreTxHash,
           error: err,
           errorCode: 'RESTORE_TX_FAILED',
+          onchainError,
         }
       }
 
@@ -497,23 +513,46 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
 
       originalTxHash = hash
       onOriginalSubmitted?.(hash)
+      onLifecycleEvent?.({
+        phase: 'original_submitted',
+        requestId,
+        transactionHash: hash,
+      })
+
+      if (effectiveConfirmationPolicy === 'return-on-submission') {
+        return {
+          success: true,
+          originalTxHash: hash,
+          archivedKeysDetected: 0,
+          confirmationStatus: 'submitted',
+        }
+      }
 
       // Wait for confirmation on success path for consistency with restore path
       const txStatus = await waitForTx(server, hash, config, signal)
 
       if (txStatus.status !== rpc.Api.GetTransactionStatus.SUCCESS) {
+        const onchainError = parseTransactionFailure(txStatus)
         return {
           success: false,
           archivedKeysDetected: 0,
+          originalTxHash: hash,
           error: 'Transaction failed to confirm',
           errorCode: 'ORIGINAL_TX_FAILED',
+          onchainError,
         }
       }
 
+      onLifecycleEvent?.({
+        phase: 'original_confirmed',
+        requestId,
+        transactionHash: hash,
+      })
       return {
         success: true,
         originalTxHash: hash,
         archivedKeysDetected: 0,
+        confirmationStatus: 'confirmed',
       }
     }
 

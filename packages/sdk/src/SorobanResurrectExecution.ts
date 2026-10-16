@@ -3,6 +3,7 @@ import {
   ArchivedLedgerEntry,
   ResurrectResult,
   RestoreKeysOptions,
+  SubmitLifecycleEvent,
   SubmitWithRestoreOptions,
   WalletAdapter,
 } from './types.js'
@@ -20,7 +21,6 @@ import { attachHistoryPersistence, type HistoryPersistenceHandle } from './Histo
 import type { HistoryPersistenceOptions } from './types.js'
 import { SorobanResurrectStateManager } from './SorobanResurrectState.js'
 import { SorobanResurrectSimulator } from './SorobanResurrectSimulation.js'
-import type { ISorobanRpcClient } from './RpcClient.js'
 import { asTxHash, asHistoryEntryId } from './branded-types.js'
 import type { AbortSignalOptions } from './AbortUtils.js'
 import { runWithSignal } from './AbortUtils.js'
@@ -46,6 +46,7 @@ export class SorobanResurrectExecutor {
   private readonly _simulator: SorobanResurrectSimulator
   private readonly _history: TransactionHistory
   private readonly _historyPersistence: HistoryPersistenceHandle | null
+  private readonly _inFlightRequests = new Map<string, Promise<ResurrectResult>>()
 
   /**
    * @param server    - Soroban RPC client instance.
@@ -347,6 +348,11 @@ export class SorobanResurrectExecutor {
     const historyId = this._history.add(transaction)
     const stateMgr = this._stateMgr
     const emitter = stateMgr.emitter
+    const emitLifecycle = (event: SubmitLifecycleEvent): void => {
+      const payload = { ...event, requestId: event.requestId ?? options.requestId }
+      emitter.emit('workflowLifecycle', payload)
+      options.onLifecycleEvent?.(payload)
+    }
 
     // Per-call restore-tx memo override (falls back to instance config).
     const effectiveConfig =
@@ -359,7 +365,7 @@ export class SorobanResurrectExecutor {
         : this._config
 
     const result = await executeWithRestore({
-      server: this._server,
+      server: options.retry ? new RetryingRpcClient(this._server, options.retry) : this._server,
       transaction,
       wallet,
       config: effectiveConfig,
@@ -403,7 +409,6 @@ export class SorobanResurrectExecutor {
       },
 
       onOriginalSubmitted: (txHash: TxHash) => {
-        stateMgr.setState('success', 'Original transaction submitted successfully')
         emitter.emit('originalSubmitted', asTxHash(txHash))
         onOriginalSubmitted?.(asTxHash(txHash))
       },
@@ -418,16 +423,28 @@ export class SorobanResurrectExecutor {
       },
     })
 
-    this._history.update(historyId, result)
+    const finalResult = { ...result, historyId }
+    this._history.update(historyId, finalResult)
 
-    if (!result.success) {
-      stateMgr.setError(result.error ?? 'Unknown error')
-      emitter.emit('error', result.error ?? 'Unknown error')
+    if (!finalResult.success) {
+      stateMgr.setError(finalResult.error ?? 'Unknown error')
+      emitter.emit('error', finalResult.error ?? 'Unknown error')
+    } else {
+      const message =
+        finalResult.confirmationStatus === 'submitted'
+          ? 'Original transaction submitted successfully'
+          : 'Original transaction confirmed successfully'
+      stateMgr.setState('success', message)
     }
 
-    emitter.emit('restoreComplete', result)
+    emitLifecycle({
+      phase: finalResult.success ? 'completed' : 'failed',
+      result: finalResult,
+      error: finalResult.error,
+    })
+    emitter.emit('restoreComplete', finalResult)
 
-    return { ...result, historyId }
+    return finalResult
   }
 
   /**
@@ -486,15 +503,19 @@ export class SorobanResurrectExecutor {
       onSigningOriginal: () => {
         stateMgr.setState('signing_original', 'Signing original transaction...')
       },
-      onOriginalSubmitted: (_txHash: string) => {
-        stateMgr.setState('success', 'Original transaction submitted successfully')
-      },
     })
 
     this._history.update(id, result)
 
     if (!result.success) {
       stateMgr.setError(result.error ?? 'Unknown error')
+    } else {
+      stateMgr.setState(
+        'success',
+        result.confirmationStatus === 'submitted'
+          ? 'Original transaction submitted successfully'
+          : 'Original transaction confirmed successfully',
+      )
     }
 
     return result
