@@ -77,6 +77,12 @@ export type ResurrectErrorCode =
    */
   | 'UNKNOWN_ERROR'
 
+  /**
+   * The caller aborted the workflow. A transaction already submitted to the
+   * network cannot be cancelled; inspect its hash/status before retrying.
+   */
+  | 'ABORTED'
+
 /**
  * Structured error thrown by SDK methods that use exception-based error
  * handling. Carries a machine-readable `code` alongside the human-readable

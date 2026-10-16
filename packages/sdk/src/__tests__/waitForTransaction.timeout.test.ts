@@ -188,4 +188,40 @@ describe('waitForTransaction — timeout and retry behavior', () => {
       await assertion
     })
   })
+
+  describe('AbortSignal cancellation', () => {
+    it('stops polling during a pending delay and clears its timer', async () => {
+      const server = makeMockServer()
+      vi.mocked(server.getTransaction).mockResolvedValue({
+        status: rpc.Api.GetTransactionStatus.NOT_FOUND,
+      } as never)
+      const controller = new AbortController()
+      const promise = waitForTransaction(server, 'hash', 1000, 60_000, {
+        signal: controller.signal,
+      })
+
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(server.getTransaction).toHaveBeenCalledTimes(1)
+      expect(vi.getTimerCount()).toBe(1)
+
+      controller.abort()
+      await expect(promise).rejects.toMatchObject({ name: 'AbortError' })
+
+      expect(server.getTransaction).toHaveBeenCalledTimes(1)
+      expect(vi.getTimerCount()).toBe(0)
+    })
+
+    it('does not start an RPC request when the signal was already aborted', async () => {
+      const server = makeMockServer()
+      const controller = new AbortController()
+      controller.abort()
+
+      await expect(
+        waitForTransaction(server, 'hash', 1000, 60_000, { signal: controller.signal }),
+      ).rejects.toMatchObject({ name: 'AbortError' })
+      expect(server.getTransaction).not.toHaveBeenCalled()
+    })
+  })
 })
