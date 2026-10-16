@@ -2,6 +2,11 @@
 
 The `@soroban-resurrect/react-hook` package is built for React 18+. Wrap the part of your app that submits transactions in a `SorobanResurrectProvider`, then read state from `useSorobanResurrectContext()` anywhere inside it.
 
+The provider creates its SDK instance after the client commits and disposes it
+when its config changes or it unmounts. TTL watcher hooks tie their polling
+intervals to the component lifecycle, including React Strict Mode's
+development-only setup/cleanup replay.
+
 ## Setup
 
 ```bash

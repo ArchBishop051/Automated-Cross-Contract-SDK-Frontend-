@@ -57,6 +57,7 @@ export type {
 export type { WalletErrorCode } from './types.js'
 export { WalletError } from './types.js'
 export { ResurrectError, RestoreFeeExceededError } from './errors.js'
+export type { AbortSignalOptions } from './AbortUtils.js'
 
 // ---------------------------------------------------------------------------
 // RPC abstraction layer (dependency injection / testing — see RpcClient.ts)
