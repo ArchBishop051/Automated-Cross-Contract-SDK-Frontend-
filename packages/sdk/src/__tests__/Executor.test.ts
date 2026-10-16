@@ -215,6 +215,29 @@ describe('executeWithRestore', () => {
     expect(onOriginalSubmitted).toHaveBeenCalledWith('tx-hash-123')
   })
 
+  it('does not submit a transaction when cancellation happens during wallet signing', async () => {
+    vi.mocked(server.simulateTransaction).mockResolvedValue(makeSuccessResponse() as never)
+    const wallet = makeWallet()
+    vi.mocked(wallet.signTransaction).mockImplementation(() => new Promise(() => {}))
+    const controller = new AbortController()
+
+    const pending = executeWithRestore({
+      server,
+      transaction: makeSampleTx(),
+      wallet,
+      config: defaultConfig,
+      signal: controller.signal,
+    })
+    await vi.waitFor(() => expect(wallet.signTransaction).toHaveBeenCalledTimes(1))
+    controller.abort()
+
+    await expect(pending).resolves.toMatchObject({
+      success: false,
+      error: 'Operation cancelled',
+    })
+    expect(server.sendTransaction).not.toHaveBeenCalled()
+  })
+
   it('performs full restore flow when restore is needed', async () => {
     vi.mocked(server.simulateTransaction)
       .mockResolvedValueOnce(makeRestoreResponse() as never)

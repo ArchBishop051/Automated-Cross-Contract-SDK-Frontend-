@@ -13,6 +13,8 @@ const mockReset = vi.fn()
 const mockDispose = vi.fn()
 const mockDetectArchivedKeys = vi.fn()
 const mockSubmitWithRestore = vi.fn()
+const mockDispose = vi.fn()
+const mockOn = vi.fn()
 
 const PROCESSING_STATES = [
   'simulating',
@@ -32,6 +34,8 @@ vi.mock('@soroban-resurrect/sdk', () => ({
     dispose: mockDispose,
     detectArchivedKeys: mockDetectArchivedKeys,
     submitWithRestore: mockSubmitWithRestore,
+    dispose: mockDispose,
+    on: mockOn,
   })),
   isProcessingState: (state: string) => PROCESSING_STATES.includes(state),
 }))
@@ -142,6 +146,7 @@ describe('useSorobanResurrect', () => {
     const { wrapper } = mountComposable(ref(testConfig))
     wrapper.unmount()
     expect(unsubscribe).toHaveBeenCalledTimes(1)
+    expect(mockDispose).toHaveBeenCalledTimes(1)
   })
 
   it('disposes state and event subscriptions when an effect scope ends and remounts', () => {
@@ -180,7 +185,42 @@ describe('useSorobanResurrect', () => {
     const tx = {} as never
     const wallet = {} as never
     await expect(api().submitWithRestore(tx, wallet)).resolves.toBe(expected)
-    expect(mockSubmitWithRestore).toHaveBeenCalledWith({ transaction: tx, wallet })
+    expect(mockSubmitWithRestore).toHaveBeenCalledWith({
+      transaction: tx,
+      wallet,
+      signal: expect.any(AbortSignal),
+    })
+  })
+
+  it('cancel aborts active submissions', () => {
+    let signal!: AbortSignal
+    mockSubmitWithRestore.mockImplementation(
+      (options: { signal: AbortSignal }) =>
+        new Promise((resolve) => {
+          signal = options.signal
+          signal.addEventListener('abort', () =>
+            resolve({ success: false, archivedKeysDetected: 0, error: 'Operation cancelled' }),
+          )
+        }),
+    )
+    const { api } = mountComposable(ref(testConfig))
+
+    const pending = api().submitWithRestore({} as never, {} as never)
+    api().cancel()
+
+    expect(signal.aborted).toBe(true)
+    return expect(pending).resolves.toMatchObject({ success: false, error: 'Operation cancelled' })
+  })
+
+  it('unsubscribes typed event listeners on unmount', () => {
+    const unsubscribe = vi.fn()
+    mockOn.mockReturnValue(unsubscribe)
+    const { api, wrapper } = mountComposable(ref(testConfig))
+
+    api().on('restoreComplete', vi.fn())
+    wrapper.unmount()
+
+    expect(unsubscribe).toHaveBeenCalledTimes(1)
   })
 
   it('delegates detectArchivedKeys to the SDK instance', async () => {

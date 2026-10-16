@@ -1,5 +1,6 @@
 import { rpc, Transaction, xdr } from '@stellar/stellar-sdk'
 import type { ISorobanRpcClient } from './RpcClient.js'
+import type { StellarPublicKey } from './branded-types.js'
 import type {
   SorobanResurrectConfig,
   WalletAdapter,
@@ -11,11 +12,7 @@ import type {
   RestoreKeysOptions,
   SorobanResurrectEvents,
 } from './types.js'
-import type { ISorobanRpcClient } from './RpcClient.js'
-import type { StellarPublicKey } from './branded-types.js'
 import { resolveConfig } from './SorobanResurrectConfig.js'
-import type { ISorobanRpcClient } from './RpcClient.js'
-import type { StellarPublicKey } from './branded-types.js'
 import { SorobanResurrectStateManager } from './SorobanResurrectState.js'
 import { SorobanResurrectSimulator } from './SorobanResurrectSimulation.js'
 import { SorobanResurrectExecutor } from './SorobanResurrectExecution.js'
@@ -64,7 +61,9 @@ const debug = createDebugger('core')
 
 export class SorobanResurrect {
   private _server: ISorobanRpcClient
-  private _config: Required<Omit<SorobanResurrectConfig, 'rpcClient'>> & { rpcClient: ISorobanRpcClient }
+  private _config: Required<Omit<SorobanResurrectConfig, 'rpcClient'>> & {
+    rpcClient: ISorobanRpcClient
+  }
 
   private readonly _stateMgr: SorobanResurrectStateManager
   private readonly _simulator: SorobanResurrectSimulator
@@ -141,7 +140,9 @@ export class SorobanResurrect {
   }
 
   /** Resolved configuration with defaults applied. Re-bound in place by {@link switchNetwork}. */
-  get config(): Required<Omit<SorobanResurrectConfig, 'rpcClient'>> & { rpcClient: ISorobanRpcClient } {
+  get config(): Required<Omit<SorobanResurrectConfig, 'rpcClient'>> & {
+    rpcClient: ISorobanRpcClient
+  } {
     return this._config
   }
 
@@ -667,7 +668,10 @@ export class SorobanResurrect {
     keys: xdr.LedgerKey[],
     opts: QueryLedgerTTLOptions = {},
   ): Promise<TTLQueryResult> {
-    const cfg = this._config as { archiveDetectionChunkSize?: number; archiveDetectionConcurrency?: number }
+    const cfg = this._config as {
+      archiveDetectionChunkSize?: number
+      archiveDetectionConcurrency?: number
+    }
     return queryLedgerTTL(this._server, keys, {
       chunkSize: cfg.archiveDetectionChunkSize,
       concurrency: cfg.archiveDetectionConcurrency,

@@ -49,6 +49,26 @@ Hook to access the `SorobanResurrect` API from within a `<SorobanResurrectProvid
 - `submitWithRestore` and `detectArchivedKeys` are safe to call before the underlying instance mounts — they return an idle-shaped fallback (`{ success: false, error: 'Not initialized' }` / `[]`) rather than throwing.
 - `on` subscribes to a typed lifecycle event on the current SDK instance and returns an unsubscribe function. Subscriptions created before initialization are attached when the SDK becomes available and are removed on provider cleanup. See [Lifecycle Events](#lifecycle-events) below.
 
+### `useSorobanResurrectSelector(selector, isEqual?)`
+
+Use the selector hook when a component only needs one workflow field. It
+subscribes to the provider's external store and re-renders only when the
+selected value changes; the default comparison is `Object.is`.
+
+```tsx
+import { useSorobanResurrectSelector } from '@soroban-resurrect/react-hook'
+
+function RestoreSpinner() {
+  const isProcessing = useSorobanResurrectSelector((value) => value.isProcessing)
+  return isProcessing ? <span>Restoring…</span> : null
+}
+```
+
+Selectors should be pure. If a selector creates a new object or array each
+time, pass an equality function (for example, shallow equality) as the second
+argument. The full `useSorobanResurrectContext()` hook remains available when
+the component needs multiple fields or actions.
+
 #### `isProcessing` contract
 
 `isProcessing` is computed as `isProcessingState(state.state)`, using the

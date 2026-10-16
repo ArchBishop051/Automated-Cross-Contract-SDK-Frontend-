@@ -267,6 +267,7 @@ export async function buildRestoreTransactionFromKeys(
  * @param pollIntervalMs - Maximum delay between polls, in ms (default `1000`).
  * @param pollTimeoutMs - Total time to keep polling before giving up, in ms
  *   (default `60_000`).
+ * @param signal - Optional signal that aborts the wait and clears its retry timer.
  * @returns The terminal `GetTransactionResponse` (status `SUCCESS` or
  *   `FAILED`).
  * @throws {Error} If the transaction does not reach a terminal status
@@ -309,6 +310,54 @@ export async function waitForTransaction(
   }
 
   throw new Error(`Transaction ${hash} did not complete within ${pollTimeoutMs}ms`)
+}
+
+function createAbortError(): Error {
+  const error = new Error('Operation cancelled')
+  error.name = 'AbortError'
+  return error
+}
+
+function awaitWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise
+  if (signal.aborted) return Promise.reject(createAbortError())
+
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener('abort', onAbort)
+      reject(createAbortError())
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort)
+        if (signal.aborted) reject(createAbortError())
+        else resolve(value)
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort)
+        reject(error)
+      },
+    )
+  })
+}
+
+function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) return new Promise((resolve) => setTimeout(resolve, ms))
+  if (signal.aborted) return Promise.reject(createAbortError())
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    const onAbort = () => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', onAbort)
+      reject(createAbortError())
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
 }
 
 /**
@@ -544,6 +593,7 @@ async function pollTransactionAdaptive(
  *   SSE to be attempted at all; omit it (or run in an environment missing
  *   `fetch`/`AbortController`/`TextDecoder`) and this falls straight to
  *   adaptive polling.
+ * @param signal - Optional signal that aborts the stream or polling fallback.
  * @returns The final transaction response
  * @throws If the transaction does not complete within the timeout
  */

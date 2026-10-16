@@ -56,13 +56,38 @@ describe('waitForTransaction — timeout and retry behavior', () => {
   })
 
   describe('RPC unavailable during polling', () => {
+    it('cancels an in-flight status request when its signal aborts', async () => {
+      const server = makeMockServer()
+      vi.mocked(server.getTransaction).mockReturnValue(new Promise(() => {}) as never)
+      const controller = new AbortController()
+
+      const promise = waitForTransaction(server, 'hash', 100, 5000, controller.signal)
+      controller.abort()
+
+      await expect(promise).rejects.toThrow('Operation cancelled')
+    })
+
+    it('clears the retry timer when polling is cancelled', async () => {
+      const server = makeMockServer()
+      vi.mocked(server.getTransaction).mockResolvedValue({
+        status: rpc.Api.GetTransactionStatus.NOT_FOUND,
+      } as never)
+      const controller = new AbortController()
+      const promise = waitForTransaction(server, 'hash', 1000, 5000, controller.signal)
+
+      await vi.advanceTimersByTimeAsync(0)
+      expect(vi.getTimerCount()).toBe(1)
+      controller.abort()
+
+      await expect(promise).rejects.toThrow('Operation cancelled')
+      expect(vi.getTimerCount()).toBe(0)
+    })
+
     it('propagates the error immediately when the RPC endpoint fails on the first poll', async () => {
       const server = makeMockServer()
       vi.mocked(server.getTransaction).mockRejectedValue(new Error('RPC unavailable'))
 
-      await expect(waitForTransaction(server, 'hash', 100, 5000)).rejects.toThrow(
-        'RPC unavailable',
-      )
+      await expect(waitForTransaction(server, 'hash', 100, 5000)).rejects.toThrow('RPC unavailable')
       expect(server.getTransaction).toHaveBeenCalledTimes(1)
     })
 

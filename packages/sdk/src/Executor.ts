@@ -55,6 +55,8 @@ export interface ExecuteParams extends AbortSignalOptions {
   wallet: WalletAdapter
   /** SDK configuration. */
   config: SorobanResurrectConfig
+  /** Optional signal for cancelling this workflow before a submission stage. */
+  signal?: AbortSignal
   /** Called when the wallet is prompted to sign the restore transaction. */
   onSigningRestore?: () => void
   /** Called right before the restore transaction is submitted. */
@@ -112,6 +114,7 @@ async function signAndMaybeFeeBump(params: {
   feeBumpConfig?: FeeBumpConfig
   networkPassphrase: string
   server: ISorobanRpcClient
+  signal?: AbortSignal
   onSigning?: () => void
   onSigningFeeBump?: () => void
   onSubmitting?: () => void
@@ -123,6 +126,7 @@ async function signAndMaybeFeeBump(params: {
     feeBumpConfig,
     networkPassphrase,
     server,
+    signal,
     onSigning,
     onSigningFeeBump,
     onSubmitting,
@@ -148,12 +152,14 @@ async function signAndMaybeFeeBump(params: {
     if (!(signedTx instanceof Transaction)) {
       throw new Error('Failed to parse signed transaction')
     }
+    throwIfAborted(signal)
     onSubmitting?.()
     const result = await runWithSignal(() => server.sendTransaction(signedTx), signal)
     return { hash: asTxHash(result.hash) }
   }
 
   // Fee-bump flow: wrap the signed inner tx in a fee-bump
+  throwIfAborted(signal)
   onSigningFeeBump?.()
   const feeBumpXdr = await runWithSignal(
     () =>
@@ -166,6 +172,7 @@ async function signAndMaybeFeeBump(params: {
     signal,
   )
 
+  throwIfAborted(signal)
   onSubmitting?.()
   const result = await runWithSignal(
     () => submitFeeBumpTransaction(server, feeBumpXdr, networkPassphrase),
@@ -209,6 +216,7 @@ async function waitForTx(
   config: SorobanResurrectConfig,
   signal?: AbortSignal,
 ): Promise<rpc.Api.GetTransactionResponse> {
+  throwIfAborted(signal)
   const pollTimeout = config.pollTimeoutMs ?? POLL_TIMEOUT_MS
 
   if (config.useSSE) {
@@ -255,6 +263,7 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
     transaction: originalTx,
     wallet,
     config,
+    signal,
     onRestoreNeeded,
     onRestoreSubmitted,
     onRestoreConfirmed,
@@ -327,8 +336,10 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
       )
 
       // Defer onRestoreNeeded until after restore tx is built
+      throwIfAborted(signal)
       onRestoreNeeded?.(archivedKeys)
 
+      throwIfAborted(signal)
       onSigningRestore?.()
       const walletOptions = signal ? { networkPassphrase, signal } : { networkPassphrase }
       const signedRestoreXdr = await runWithSignal(
@@ -348,6 +359,7 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
         }
       }
 
+      throwIfAborted(signal)
       onSubmittingRestore?.()
       const restoreResult = await runWithSignal(() => server.sendTransaction(signedRestoreTx), signal)
       restoreTxHash = asTxHash(restoreResult.hash)
@@ -395,6 +407,7 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
           signal,
         )
 
+        throwIfAborted(signal)
         onSigningOriginal?.()
         const originalWalletOptions = signal
           ? { networkPassphrase, signal }
@@ -513,7 +526,7 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
       errorCode: 'UNEXPECTED_SIMULATION_RESPONSE',
     }
   } catch (err) {
-    const message = walletErrorMessage(err)
+    const message = signal?.aborted ? 'Operation cancelled' : walletErrorMessage(err)
     onRestoreFailed?.(message)
     return {
       success: false,

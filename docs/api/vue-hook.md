@@ -9,8 +9,17 @@ when the active Vue effect scope ends. It also works in a manually-created
 `effectScope()`. Use it when a component needs its own instance.
 
 ```ts
-const { state, isProcessing, submitWithRestore, reset } = useSorobanResurrect(config)
+const { state, isProcessing, submitWithRestore, reset, cancel } = useSorobanResurrect(config)
+
+const pending = submitWithRestore(transaction, wallet)
+cancel() // stops active local workflows; already-submitted on-chain transactions cannot be undone
+const result = await pending // cancellation is returned as a failed ResurrectResult
 ```
+
+`cancel()` aborts all active `submitWithRestore` calls and is safe when no call
+is active. Cancellation prevents subsequent SDK workflow steps, but cannot
+reverse a transaction already submitted to the network or dismiss a wallet
+prompt that the wallet adapter does not support aborting.
 
 ## `SorobanResurrectPlugin` — shared instance via `app.use()`
 

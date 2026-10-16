@@ -48,6 +48,8 @@ export interface UseSorobanResurrectReturn {
   detectArchivedKeys: (transaction: Transaction) => Promise<ArchivedLedgerEntry[]>
   /** Reset state back to idle. Optionally, only reset if in a specific state. */
   reset: (fromState?: RestoreState) => void
+  /** Abort every active `submitWithRestore` call. Safe to call when idle. */
+  cancel: () => void
   /**
    * Subscribes to a typed lifecycle event (`restoreNeeded`, `restoreSubmitted`,
    * `restoreConfirmed`, `originalSubmitted`, `error`, `restoreComplete`, `stateChange`)
@@ -132,10 +134,12 @@ export function useSorobanResurrect(
     }
     if (typeof info.feeEstimate === 'number') return info.feeEstimate
     if (typeof info.estimatedFee === 'number') return info.estimatedFee
-    const result = lastResult.value as (ResurrectResult & {
-      feeEstimate?: number
-      estimatedFee?: number
-    }) | null
+    const result = lastResult.value as
+      | (ResurrectResult & {
+          feeEstimate?: number
+          estimatedFee?: number
+        })
+      | null
     if (result && typeof result.feeEstimate === 'number') return result.feeEstimate
     if (result && typeof result.estimatedFee === 'number') return result.estimatedFee
     return null
@@ -145,7 +149,8 @@ export function useSorobanResurrect(
     transaction: Transaction,
     wallet: WalletAdapter,
   ): Promise<ResurrectResult> => {
-    if (!resurrect.value) {
+    const instance = resurrect.value
+    if (!instance) {
       const result: ResurrectResult = {
         success: false,
         archivedKeysDetected: 0,
@@ -154,9 +159,19 @@ export function useSorobanResurrect(
       lastResult.value = result
       return result
     }
-    const result = await resurrect.value.submitWithRestore({ transaction, wallet })
-    lastResult.value = result
-    return result
+    const controller = new AbortController()
+    activeSubmissions.add(controller)
+    try {
+      const result = await instance.submitWithRestore({
+        transaction,
+        wallet,
+        signal: controller.signal,
+      })
+      if (resurrect.value === instance) lastResult.value = result
+      return result
+    } finally {
+      activeSubmissions.delete(controller)
+    }
   }
 
   const detectArchivedKeys = async (transaction: Transaction): Promise<ArchivedLedgerEntry[]> => {
@@ -193,6 +208,7 @@ export function useSorobanResurrect(
     submitWithRestore,
     detectArchivedKeys,
     reset,
+    cancel,
     on,
     resurrect,
   }
