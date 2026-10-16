@@ -2,7 +2,6 @@ import {
   ref,
   computed,
   watch,
-  onUnmounted,
   shallowRef,
   toValue,
   type MaybeRefOrGetter,
@@ -52,7 +51,8 @@ export interface UseSorobanResurrectReturn {
   /**
    * Subscribes to a typed lifecycle event (`restoreNeeded`, `restoreSubmitted`,
    * `restoreConfirmed`, `originalSubmitted`, `error`, `restoreComplete`, `stateChange`)
-   * on the current SDK instance. Returns an unsubscribe function.
+   * on the current SDK instance. Returns an unsubscribe function; any remaining
+   * subscriptions are removed when the active effect scope ends.
    */
   on: <K extends keyof SorobanResurrectEvents>(
     event: K,
@@ -67,7 +67,8 @@ export interface UseSorobanResurrectReturn {
  *
  * Subscribes to SDK state changes and exposes the full API as reactive refs.
  * Automatically creates a new SDK instance when the config changes.
- * Calls `onUnmounted` internally — no manual cleanup required.
+ * Subscriptions and the owned SDK instance are disposed when the active Vue
+ * effect scope ends — no manual cleanup required.
  *
  * @example
  * ```ts
@@ -80,36 +81,30 @@ export function useSorobanResurrect(
   const resurrect = shallowRef<SorobanResurrect | null>(null)
   const state = ref<RestoreStateInfo>({ state: 'idle', message: '' })
   const lastResult = ref<ResurrectResult | null>(null)
-  let unsubscribeState: (() => void) | null = null
+  const eventUnsubscribers = new Set<() => void>()
 
   // Watch config changes and reinitialize the SDK
   watch(
     () => toValue(configRef),
-    (newConfig) => {
-      // Clean up previous subscription
-      if (unsubscribeState) {
-        unsubscribeState()
-        unsubscribeState = null
-      }
-
-      resurrect.value = new SorobanResurrect(newConfig)
+    (newConfig, _oldConfig, onCleanup) => {
+      const instance = new SorobanResurrect(newConfig)
+      resurrect.value = instance
       state.value = { state: 'idle', message: '' }
       lastResult.value = null
 
-      unsubscribeState = resurrect.value.onStateChange((info: RestoreStateInfo) => {
+      const unsubscribeState = instance.onStateChange((info: RestoreStateInfo) => {
         state.value = info
+      })
+      onCleanup(() => {
+        unsubscribeState()
+        for (const unsubscribe of eventUnsubscribers) unsubscribe()
+        eventUnsubscribers.clear()
+        instance.dispose()
+        if (resurrect.value === instance) resurrect.value = null
       })
     },
     { immediate: true, deep: true },
   )
-
-  // Clean up on component unmount
-  onUnmounted(() => {
-    if (unsubscribeState) {
-      unsubscribeState()
-      unsubscribeState = null
-    }
-  })
 
   // Derived helpers so consumers don't re-implement state checks. `isProcessing`
   // reuses the SDK's shared `isProcessingState` (single source of truth).
@@ -177,7 +172,13 @@ export function useSorobanResurrect(
     event: K,
     listener: (payload: SorobanResurrectEvents[K]) => void,
   ): (() => void) => {
-    return resurrect.value?.on(event, listener) ?? (() => {})
+    const unsubscribe = resurrect.value?.on(event, listener)
+    if (!unsubscribe) return () => {}
+    eventUnsubscribers.add(unsubscribe)
+    return () => {
+      unsubscribe()
+      eventUnsubscribers.delete(unsubscribe)
+    }
   }
 
   return {
