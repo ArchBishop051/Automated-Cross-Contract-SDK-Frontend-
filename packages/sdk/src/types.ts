@@ -43,6 +43,33 @@ export interface Logger {
 }
 
 /**
+ * Platform-neutral storage contract for transaction history persistence.
+ *
+ * Both synchronous Web Storage and asynchronous stores such as React Native
+ * AsyncStorage are supported. Storage access should be supplied lazily by the
+ * host application when its platform is available.
+ */
+export interface HistoryStorage {
+  getItem(key: string): string | null | Promise<string | null>;
+  setItem(key: string, value: string): void | Promise<void>;
+}
+
+/** Options for persisting transaction history. */
+export interface HistoryPersistenceOptions {
+  /** A platform-appropriate key/value storage adapter. */
+  storage: HistoryStorage;
+  /** Storage key; defaults to `soroban-resurrect:history`. */
+  key?: string;
+  /** Persist redacted transaction hashes instead of full transaction data. */
+  mode?: 'full' | 'minimal';
+  /** Optional transform used to encrypt/decrypt or forward stored data. */
+  serializer?: {
+    serialize(plain: string): string | Promise<string>;
+    deserialize(stored: string): string | Promise<string>;
+  };
+}
+
+/**
  * A logger that discards every message. Used as the default when no
  * logger is injected so the SDK never writes to the console on its own.
  */

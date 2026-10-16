@@ -121,6 +121,75 @@ describe('executeWithRestore', () => {
     expect(result.error).toContain('simulation failed')
   })
 
+  it('returns an aborted result and does not submit when the wallet prompt is cancelled', async () => {
+    vi.mocked(server.simulateTransaction).mockResolvedValue(makeSuccessResponse() as never)
+    const controller = new AbortController()
+    const wallet = makeWallet()
+    wallet.signTransaction = vi.fn().mockImplementation(async (_tx, options) => {
+      controller.abort()
+      expect(options).toMatchObject({ signal: controller.signal })
+      return 'unused'
+    })
+
+    const result = await executeWithRestore({
+      server,
+      transaction: makeSampleTx(),
+      wallet,
+      config: defaultConfig,
+      signal: controller.signal,
+    })
+
+    expect(result).toMatchObject({
+      success: false,
+      errorCode: 'ABORTED',
+      error: 'The operation was aborted',
+    })
+    expect(server.sendTransaction).not.toHaveBeenCalled()
+  })
+
+  it('does not simulate when the signal is already aborted', async () => {
+    const controller = new AbortController()
+    controller.abort()
+
+    const result = await executeWithRestore({
+      server,
+      transaction: makeSampleTx(),
+      wallet: makeWallet(),
+      config: defaultConfig,
+      signal: controller.signal,
+    })
+
+    expect(result.errorCode).toBe('ABORTED')
+    expect(server.simulateTransaction).not.toHaveBeenCalled()
+  })
+
+  it('stops waiting for a pending simulation after cancellation', async () => {
+    let finishSimulation!: (response: never) => void
+    vi.mocked(server.simulateTransaction).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishSimulation = resolve
+        }),
+    )
+    const controller = new AbortController()
+    const promise = executeWithRestore({
+      server,
+      transaction: makeSampleTx(),
+      wallet: makeWallet(),
+      config: defaultConfig,
+      signal: controller.signal,
+    })
+
+    await vi.waitFor(() => expect(server.simulateTransaction).toHaveBeenCalledOnce())
+    controller.abort()
+
+    const result = await promise
+    expect(result.errorCode).toBe('ABORTED')
+    expect(server.sendTransaction).not.toHaveBeenCalled()
+
+    finishSimulation(makeSuccessResponse() as never)
+  })
+
   it('submits transaction directly when simulation succeeds (no restore)', async () => {
     vi.mocked(server.simulateTransaction).mockResolvedValue(makeSuccessResponse() as never)
     vi.mocked(server.sendTransaction).mockResolvedValue({ hash: 'tx-hash-123' } as never)
@@ -144,6 +213,29 @@ describe('executeWithRestore', () => {
     expect(result.archivedKeysDetected).toBe(0)
     expect(wallet.signTransaction).toHaveBeenCalledTimes(1)
     expect(onOriginalSubmitted).toHaveBeenCalledWith('tx-hash-123')
+  })
+
+  it('does not submit a transaction when cancellation happens during wallet signing', async () => {
+    vi.mocked(server.simulateTransaction).mockResolvedValue(makeSuccessResponse() as never)
+    const wallet = makeWallet()
+    vi.mocked(wallet.signTransaction).mockImplementation(() => new Promise(() => {}))
+    const controller = new AbortController()
+
+    const pending = executeWithRestore({
+      server,
+      transaction: makeSampleTx(),
+      wallet,
+      config: defaultConfig,
+      signal: controller.signal,
+    })
+    await vi.waitFor(() => expect(wallet.signTransaction).toHaveBeenCalledTimes(1))
+    controller.abort()
+
+    await expect(pending).resolves.toMatchObject({
+      success: false,
+      error: 'Operation cancelled',
+    })
+    expect(server.sendTransaction).not.toHaveBeenCalled()
   })
 
   it('performs full restore flow when restore is needed', async () => {
