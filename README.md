@@ -7,6 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/Automated-Cross-Contract-SDK/Automated-Cross-Contract-SDK-Frontend-?style=social)](https://github.com/Automated-Cross-Contract-SDK/Automated-Cross-Contract-SDK-Frontend-/stargazers)
 [![GitHub issues](https://img.shields.io/github/issues/Automated-Cross-Contract-SDK/Automated-Cross-Contract-SDK-Frontend-)](https://github.com/Automated-Cross-Contract-SDK/Automated-Cross-Contract-SDK-Frontend-/issues)
+[![GitHub Discussions](https://img.shields.io/github/discussions/Automated-Cross-Contract-SDK/Automated-Cross-Contract-SDK-Frontend-)](https://github.com/Automated-Cross-Contract-SDK/Automated-Cross-Contract-SDK-Frontend-/discussions)
 
 **Automated Cross-Contract State Restoration SDK & Wallet Middleware**
 
@@ -46,6 +47,16 @@ Soroban-Resurrect solves the "archived ledger entry" problem for Soroban dApps. 
 | `@soroban-resurrect/svelte-hook` | Svelte store for easy dApp integration                                                                 |
 
 ## Quick Start
+
+The fastest start is the scaffolder — a Vite + React app with the SDK, one
+wallet adapter, a restore button and a TTL warning already wired up:
+
+```bash
+npm create soroban-resurrect@latest my-app
+cd my-app && npm install && npm run dev
+```
+
+To add the SDK to an existing project instead:
 
 ```bash
 npm install @soroban-resurrect/sdk @stellar/stellar-sdk
@@ -403,7 +414,7 @@ Soroban RPC endpoint) when writing tests against this SDK, see
 
 ### Documentation Site
 
-The full documentation site (getting started guide, complete API reference, interactive examples, tutorial, and framework integration guides) lives in [`docs/`](./docs) and is built with [VitePress](https://vitepress.dev/). Run it locally with `npm run docs:dev`, or build the static site with `npm run docs:build`.
+The full documentation site (getting started guide, complete API reference, interactive examples, tutorial, and framework integration guides) lives in [`docs/`](./docs) and is built with [VitePress](https://vitepress.dev/). Run it locally with `npm run docs:dev`, or build the static site with `npm run docs:build`. The site also ships an [in-browser playground](./docs/examples/playground.md) that exercises the restore flow against a fake RPC client with canned responses — no wallet or testnet required.
 
 ### Project Structure
 
@@ -436,6 +447,45 @@ The full documentation site (getting started guide, complete API reference, inte
 
 ---
 
+## Community
+
+Questions, ideas, and show-and-tell posts live in [GitHub Discussions](https://github.com/Automated-Cross-Contract-SDK/Automated-Cross-Contract-SDK-Frontend-/discussions) so the issue tracker
+stays focused on bugs and scoped feature work.
+
+| Category                                                                                                                                     | Use it for                                                     |
+| -------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| [Q&A](https://github.com/Automated-Cross-Contract-SDK/Automated-Cross-Contract-SDK-Frontend-/discussions/categories/q-a)                     | "How do I…?" questions, usage help, troubleshooting            |
+| [Ideas](https://github.com/Automated-Cross-Contract-SDK/Automated-Cross-Contract-SDK-Frontend-/discussions/categories/ideas)                 | Early-stage proposals before they become feature requests      |
+| [Show & Tell](https://github.com/Automated-Cross-Contract-SDK/Automated-Cross-Contract-SDK-Frontend-/discussions/categories/show-and-tell)   | Share what you've built with Soroban-Resurrect                 |
+| [Announcements](https://github.com/Automated-Cross-Contract-SDK/Automated-Cross-Contract-SDK-Frontend-/discussions/categories/announcements) | Releases, roadmap updates, and project news (maintainers only) |
+
+Found a bug? Open a [bug report](https://github.com/Automated-Cross-Contract-SDK/Automated-Cross-Contract-SDK-Frontend-/issues/new?template=bug_report.yml). See
+[CONTRIBUTING.md](./CONTRIBUTING.md#community--discussions) for more on where to post.
+
+## Roadmap
+
+The epic backlog is mapped to three release phases in [`docs/roadmap.md`](./docs/roadmap.md):
+
+1. **Phase 1 — v0.2 Hardening:** `main` compiles, documented APIs behave as documented, core test coverage.
+2. **Phase 2 — v1.0 Production Readiness:** complete docs, full wallet coverage, perf budgets, release provenance.
+3. **Phase 3 — Post-1.0 Scale:** examples, developer tooling, and ecosystem growth.
+
+Live progress is tracked on the [GitHub Project board](https://github.com/orgs/Automated-Cross-Contract-SDK/projects).
+
+## Showcase
+
+See [who uses Soroban-Resurrect](./docs/showcase.md) — community projects and the reference
+integrations maintained in this repository. Using the SDK?
+[Add your project](./docs/showcase.md#add-your-project) or post it in
+[Show & Tell](https://github.com/Automated-Cross-Contract-SDK/Automated-Cross-Contract-SDK-Frontend-/discussions/categories/show-and-tell).
+
+## Funding
+
+Soroban-Resurrect does not currently have a GitHub Sponsors or Open Collective account. The
+[`.github/FUNDING.yml`](./.github/FUNDING.yml) file records this status and will be updated with
+sponsorship links if maintainers set one up. In the meantime, the best ways to support the project
+are contributing code or docs, reporting bugs, and [adding your project to the showcase](./docs/showcase.md#add-your-project).
+
 ## Migrating
 
 See [MIGRATION.md](./MIGRATION.md) for breaking changes and upgrade steps between versions.
@@ -443,3 +493,9 @@ See [MIGRATION.md](./MIGRATION.md) for breaking changes and upgrade steps betwee
 ## License
 
 MIT
+
+## Handsoff notes
+
+<!-- handsoff-issue-366 -->
+
+- #366: SDK: futurenet presets resolve to a passphrase the config validator rejects

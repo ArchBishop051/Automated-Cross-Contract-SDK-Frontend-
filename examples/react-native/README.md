@@ -17,6 +17,15 @@ Demonstrates:
   keeps working after an app kill. `await sdk.ready` before reading persisted
   history. Requires `@react-native-async-storage/async-storage`.
 
+## Prerequisites
+
+- Node.js 18+ and the React Native toolchain (Xcode and/or Android Studio)
+- The repo packages built: `npm install && npm run build` from the repo root
+
+**Network:** testnet. Bare React Native has no `.env` loader — `.env.example` lists the values hard-coded at the top of `App.tsx`.
+
+Scripts: `npm run dev` (Metro), `npm run build` (release Android bundle into `dist/`), `npm run typecheck`.
+
 ## Setup
 
 This example expects a standard bare React Native project setup (Xcode /
@@ -31,3 +40,30 @@ npm run android        # or: npm run ios
 Metro's default resolver already understands npm workspaces, so it resolves
 `@soroban-resurrect/sdk` and `@soroban-resurrect/react-hook` straight from
 the monorepo's `packages/*` sources.
+
+## TTL watch-and-extend (`ttlWatchExample.tsx`)
+
+`ttlWatchExample.tsx` shows the proactive flow on mobile: it polls
+`getExpiringSoonEntries()` for a set of ledger keys, shows a warning banner
+once any entry drops below the threshold (~24 h), and extends the entries via
+`restoreKeys()` only when the user taps **Extend now**.
+
+Polling is tied to `AppState`: it stops when the app goes to the background
+(where iOS/Android suspend JS timers anyway) and restarts — with an immediate
+poll — when the app returns to the foreground. The component uses only React
+Native APIs; it never touches `window` or `document`.
+
+Render it with your wallet adapter and the keys to watch:
+
+```tsx
+<TTLWatchExample wallet={wallet} keys={[positionKey]} />
+```
+
+### Required polyfills
+
+`@stellar/stellar-sdk` needs Node globals that React Native lacks. Load these
+in `index.js` **before** any SDK import (already done in this example):
+
+- `react-native-get-random-values` — `crypto.getRandomValues` for key generation
+- `buffer` — assign `global.Buffer = Buffer`
+- `react-native-url-polyfill/auto` — spec-compliant `URL` for the RPC client (if your RN version's `URL` is incomplete)

@@ -6,12 +6,22 @@ export default defineConfig({
   base: '/Automated-Cross-Contract-SDK-Frontend-/docs/',
   cleanUrls: true,
 
+  // Several docs pages link to repository files that live outside this
+  // VitePress source root (e.g. `../ARCHITECTURE.md`, `../packages/sdk/src`),
+  // which the dead-link checker can't resolve. Site-internal links are always
+  // root-absolute (`/guide/...`), so ignoring relative `../` links only
+  // silences those out-of-root references.
+  ignoreDeadLinks: [/\.\.\//],
+
   themeConfig: {
     nav: [
       { text: 'Guide', link: '/guide/getting-started' },
       { text: 'API Reference', link: '/api/sdk' },
       { text: 'Examples', link: '/examples/' },
+      { text: 'Playground', link: '/examples/playground' },
       { text: 'Integrations', link: '/integrations/react' },
+      { text: 'Showcase', link: '/showcase' },
+      { text: 'Roadmap', link: '/roadmap' },
     ],
 
     sidebar: {
@@ -20,7 +30,10 @@ export default defineConfig({
           text: 'Guide',
           items: [
             { text: 'Getting Started', link: '/guide/getting-started' },
+            { text: 'Manual Flow vs. SDK', link: '/guide/comparison' },
             { text: 'Tutorial: Common Use Cases', link: '/guide/tutorial' },
+            { text: 'Restore Fees and Limits', link: '/guide/restore-fees' },
+            { text: 'History Persistence', link: '/guide/history-persistence' },
             { text: 'Local Development', link: '/guide/local-development' },
             { text: 'Local Package Development', link: '/guide/local-package-development' },
           ],
@@ -41,7 +54,10 @@ export default defineConfig({
       '/examples/': [
         {
           text: 'Examples',
-          items: [{ text: 'Overview', link: '/examples/' }],
+          items: [
+            { text: 'Overview', link: '/examples/' },
+            { text: 'Interactive Playground', link: '/examples/playground' },
+          ],
         },
       ],
       '/integrations/': [
@@ -52,6 +68,11 @@ export default defineConfig({
             { text: 'Next.js', link: '/integrations/nextjs' },
             { text: 'Vite', link: '/integrations/vite' },
             { text: 'Astro', link: '/integrations/astro' },
+            { text: 'Overview & Adapter Matrix', link: '/integrations/' },
+            { text: 'Adapters and Wallets', link: '/integrations/adapters-and-wallets' },
+            { text: 'Rabet', link: '/integrations/rabet' },
+            { text: 'WalletConnect', link: '/integrations/walletconnect' },
+            { text: 'Stellar Wallets Kit', link: '/integrations/walletkit' },
           ],
         },
       ],

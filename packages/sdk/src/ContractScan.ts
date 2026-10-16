@@ -17,28 +17,29 @@
  * - {@link getExpiringEntriesForAccount} — the account variant: scans the
  *   account entry plus its trustlines by presence on-chain.
  *
- * Both reuse {@link queryLedgerTTL}, which already fetches ledger entries
- * in chunks of 50, so arbitrarily large key sets are handled.
+ * Both use the shared chunked fetch (`fetchLedgerEntriesChunked`), so
+ * arbitrarily large key sets are handled with bounded concurrency.
  */
 
 import { Address, Asset, StrKey, xdr } from '@stellar/stellar-sdk'
 import type { ISorobanRpcClient } from './RpcClient.js'
 import type { ArchivedLedgerEntry } from './types.js'
 import { asXdrBase64, type XdrBase64 } from './branded-types.js'
-import { queryLedgerTTL, type LedgerEntryTTLInfo } from './TTLHelpers.js'
-
-/**
- * Default "expiring soon" window, in ledgers. ~17 280 ledgers ≈ 24 h at the
- * nominal 5 s ledger close time.
- */
-export const DEFAULT_EXPIRING_SOON_LEDGERS = 17_280
+import {
+  getCachedLatestLedger,
+  queryLedgerTTL,
+  type LedgerEntryTTLInfo,
+  type QueryLedgerTTLOptions,
+} from './TTLHelpers.js'
+import { fetchLedgerEntriesChunked } from './ledgerChunks.js'
+import { DEFAULT_EXPIRING_SOON_LEDGERS } from './ttl.js'
 
 // ---------------------------------------------------------------------------
 // Contract scan
 // ---------------------------------------------------------------------------
 
 /** Options for {@link getExpiringEntriesForContract}. */
-export interface ContractScanOptions {
+export interface ContractScanOptions extends QueryLedgerTTLOptions {
   /**
    * Contract storage keys (the `ScVal` used as the map key in
    * `env.storage().persistent().set(key, ...)`) to include in the scan.
@@ -161,7 +162,7 @@ export async function getExpiringEntriesForContract(
   }
   for (const sk of storageKeys) keys.push(contractDataKey(contractId, sk, durability))
 
-  const { entries, currentLedger, queriedAt } = await queryLedgerTTL(server, keys)
+  const { entries, currentLedger, queriedAt } = await queryLedgerTTL(server, keys, opts)
 
   const expiringSoon = entries.filter((e) => !e.isArchived && e.ttlLedgers <= expiringWithinLedgers)
   const archived: ArchivedLedgerEntry[] = entries
@@ -179,7 +180,7 @@ export async function getExpiringEntriesForContract(
 // ---------------------------------------------------------------------------
 
 /** Options for {@link getExpiringEntriesForAccount}. */
-export interface AccountScanOptions {
+export interface AccountScanOptions extends QueryLedgerTTLOptions {
   /**
    * Trustline assets to check for the account (e.g. derived from Horizon
    * balances). The native asset is ignored — it has no trustline entry.
@@ -267,21 +268,21 @@ export async function getExpiringEntriesForAccount(
   }
 
   const queriedAt = Date.now()
-  const { sequence: currentLedger } = await server.getLatestLedger()
+  const currentLedger =
+    opts.currentLedger ?? (await getCachedLatestLedger(server, opts.latestLedgerCacheMs))
 
   const found = new Set<string>()
-  const chunkSize = 50
-  for (let i = 0; i < specs.length; i += chunkSize) {
-    const chunk = specs.slice(i, i + chunkSize)
-    try {
-      const res = await server.getLedgerEntries(...chunk.map((s) => s.key))
-      for (const entry of res.entries ?? []) {
-        found.add(entry.key.toXDR('base64'))
-      }
-    } catch (err) {
-      console.warn('ContractScan: getLedgerEntries chunk failed, treating keys as missing:', err)
-    }
-  }
+  const results = await fetchLedgerEntriesChunked(
+    server,
+    specs.map((s) => s.key),
+    {
+      chunkSize: opts.chunkSize,
+      concurrency: opts.concurrency,
+      onChunkError: (err) =>
+        console.warn('ContractScan: getLedgerEntries chunk failed, treating keys as missing:', err),
+    },
+  )
+  for (const entry of results) found.add(entry.key.toXDR('base64'))
 
   const entries: ClassicEntryStatus[] = specs.map((s) => {
     const keyBase64 = asXdrBase64(s.key.toXDR('base64'))

@@ -6,14 +6,65 @@ Thank you for your interest in contributing! This document covers everything you
 
 ## Table of Contents
 
+- [Community & Discussions](#community--discussions)
+- [Triage & Issue Labels](#triage--issue-labels)
 - [Dev Environment Setup](#dev-environment-setup)
 - [Project Structure](#project-structure)
 - [Code Style](#code-style)
 - [Testing Requirements](#testing-requirements)
 - [Commit Format](#commit-format)
 - [Pull Request Process](#pull-request-process)
+- [Dependency Updates](#dependency-updates)
+- [Package Support & Deprecation](#package-support--deprecation)
 - [Reporting Bugs](#reporting-bugs)
 - [Requesting Features](#requesting-features)
+
+---
+
+## Community & Discussions
+
+The issue tracker is reserved for **bugs** and **scoped feature requests**. Everything else goes to
+[GitHub Discussions](https://github.com/Automated-Cross-Contract-SDK/Automated-Cross-Contract-SDK-Frontend-/discussions):
+
+| Category                                                                                                                                     | Who posts        | Use it for                                                                                 |
+| -------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------ |
+| [Q&A](https://github.com/Automated-Cross-Contract-SDK/Automated-Cross-Contract-SDK-Frontend-/discussions/categories/q-a)                     | Anyone           | Usage questions and troubleshooting. Mark the answer that solved your problem as accepted. |
+| [Ideas](https://github.com/Automated-Cross-Contract-SDK/Automated-Cross-Contract-SDK-Frontend-/discussions/categories/ideas)                 | Anyone           | Early-stage proposals. Scoped, agreed ideas are converted into feature-request issues.     |
+| [Show & Tell](https://github.com/Automated-Cross-Contract-SDK/Automated-Cross-Contract-SDK-Frontend-/discussions/categories/show-and-tell)   | Anyone           | Projects built with the SDK — candidates for the [showcase](./docs/showcase.md).           |
+| [Announcements](https://github.com/Automated-Cross-Contract-SDK/Automated-Cross-Contract-SDK-Frontend-/discussions/categories/announcements) | Maintainers only | Releases, [roadmap](./docs/roadmap.md) updates, and project news.                          |
+
+- The "New issue" page links to these categories; blank issues are disabled so questions don't land
+  in the tracker by accident.
+- Maintainers may convert an issue that is really a question into a Q&A discussion, and convert an
+  agreed Idea into an issue with the appropriate `epic/*` label.
+- Planned work and phase ordering are documented in the [roadmap](./docs/roadmap.md).
+
+---
+
+## Triage & Issue Labels
+
+Maintainers rotate issue triage weekly. The maintainer on rotation owns new
+issues for that week and should provide a first response within **5 business
+days**. If that person is unavailable, another maintainer should pick up the
+issue rather than letting the response window lapse.
+
+When triaging, confirm that the issue is reproducible or sufficiently scoped,
+apply the relevant area/priority labels, and identify an owner for work that
+needs one. Use `help wanted` for work that needs an outside contributor or
+maintainer owner. Do not label a broad epic or multi-package project as a
+`good first issue`.
+
+A `good first issue` must be independently completable and its body must name
+the likely files or package to change and a command that verifies the result.
+Prefer a focused documentation, test, or isolated implementation task; split
+epics into smaller issues before inviting a newcomer to take them.
+
+The stale workflow marks issues stale after **60 days** without activity and
+closes them **14 days** later. Issues labelled `good first issue` or
+`help wanted` are exempt while they are actively recruiting a contributor.
+Pull requests are marked stale after **30 days** and closed **14 days** later;
+dependency update PRs are exempt. A contributor can keep an issue or PR open
+by commenting with a brief status update.
 
 ---
 
@@ -21,11 +72,11 @@ Thank you for your interest in contributing! This document covers everything you
 
 ### Prerequisites
 
-| Tool | Minimum version |
-|------|----------------|
-| Node.js | 18.x |
-| npm | 9.x (ships with Node 18) |
-| Git | any recent version |
+| Tool    | Minimum version          |
+| ------- | ------------------------ |
+| Node.js | 18.x                     |
+| npm     | 9.x (ships with Node 18) |
+| Git     | any recent version       |
 
 ### Steps
 
@@ -46,19 +97,23 @@ npm run dev:example
 
 ### Useful scripts
 
-| Command | What it does |
-|---------|-------------|
-| `npm run build` | Build all packages |
-| `npm run build:sdk` | Build only `@soroban-resurrect/sdk` |
-| `npm run build:hook` | Build only `@soroban-resurrect/react-hook` |
-| `npm test` | Run all unit tests |
-| `npm run test:watch` | Run tests in watch mode |
-| `npm run typecheck` | Type-check all packages without emitting |
-| `npm run lint` | Lint all TypeScript source files |
-| `npm run lint:fix` | Auto-fix lint issues |
-| `npm run format` | Check formatting |
-| `npm run format:fix` | Auto-fix formatting |
-| `npm run clean` | Remove all `dist/` directories |
+| Command                            | What it does                                                          |
+| ---------------------------------- | --------------------------------------------------------------------- |
+| `npm run build`                    | Build all packages                                                    |
+| `npm run build:sdk`                | Build only `@soroban-resurrect/sdk`                                   |
+| `npm run build:hook`               | Build only `@soroban-resurrect/react-hook`                            |
+| `npm run verify`                   | Pre-PR gate: typecheck, lint, format, test, build (all packages)      |
+| `npm test`                         | Run all unit tests                                                    |
+| `npx vitest run <path>`            | Run tests matching a path across all packages from the repo root      |
+| `npm run test:watch`               | Run tests in watch mode                                               |
+| `npm run typecheck`                | Type-check all packages without emitting                              |
+| `npm run lint`                     | Lint all TypeScript source files                                      |
+| `npm run lint:fix`                 | Auto-fix lint issues                                                  |
+| `npm run benchmark:imports`        | Measure cold import time per package entry vs. the committed baseline |
+| `npm run benchmark:imports:update` | Regenerate the import-time baseline (run on a CI-class runner)        |
+| `npm run format`                   | Check formatting                                                      |
+| `npm run format:fix`               | Auto-fix formatting                                                   |
+| `npm run clean`                    | Remove all `dist/` directories                                        |
 
 ---
 
@@ -123,6 +178,18 @@ The project uses `typescript-eslint` with `eslint:recommended` and `@typescript-
 
 CI runs `npm run lint` and `npm run format` on every push. Both must pass.
 
+### Pre-commit hook
+
+Husky runs `lint-staged` on every commit (see `.lintstagedrc.mjs`):
+
+- staged `.ts`/`.tsx` files are linted and formatted, then `turbo run typecheck` runs
+  for each `packages/*` workspace that owns a staged file (cached by Turbo, so a
+  repeat run takes a few seconds);
+- commits that touch no TypeScript (docs, JSON) skip the typecheck entirely.
+
+In an emergency you can bypass the hook with `git commit --no-verify` — CI still
+runs the full lint and typecheck.
+
 ### File and naming conventions
 
 - **Files**: PascalCase for classes (`SorobanResurrect.ts`), camelCase for utilities (`constants.ts`).
@@ -172,6 +239,16 @@ describe('myFunction', () => {
 
 ---
 
+### Bundle budgets
+
+CI runs `node scripts/check-bundle-budgets.mjs` after `npm run build`. It bundles every
+publishable entry point, compares its gzipped size to `scripts/bundle-budgets.json`, and
+fails naming any entry point over budget. It also checks that importing only
+`SorobanResurrect` tree-shakes away hardware-wallet and authorization code.
+
+To raise a budget deliberately, run `npm run build && node scripts/check-bundle-budgets.mjs --update`
+(which records current sizes with 10% headroom) and explain the increase in your PR.
+
 ## Commit Format
 
 This project follows the [Conventional Commits](https://www.conventionalcommits.org/) specification. Every commit message must match:
@@ -186,28 +263,28 @@ This project follows the [Conventional Commits](https://www.conventionalcommits.
 
 ### Types
 
-| Type | Use for |
-|------|---------|
-| `feat` | New feature |
-| `fix` | Bug fix |
-| `docs` | Documentation only |
+| Type       | Use for                                         |
+| ---------- | ----------------------------------------------- |
+| `feat`     | New feature                                     |
+| `fix`      | Bug fix                                         |
+| `docs`     | Documentation only                              |
 | `refactor` | Code change that is neither a fix nor a feature |
-| `test` | Adding or fixing tests |
-| `chore` | Build process, tooling, dependency updates |
-| `perf` | Performance improvement |
-| `ci` | CI/CD configuration changes |
+| `test`     | Adding or fixing tests                          |
+| `chore`    | Build process, tooling, dependency updates      |
+| `perf`     | Performance improvement                         |
+| `ci`       | CI/CD configuration changes                     |
 
 ### Scopes
 
 Use the package or module being changed:
 
-| Scope | Covers |
-|-------|--------|
-| `sdk` | `packages/sdk` |
+| Scope        | Covers                |
+| ------------ | --------------------- |
+| `sdk`        | `packages/sdk`        |
 | `react-hook` | `packages/react-hook` |
-| `example` | `examples/basic` |
-| `ci` | `.github/workflows` |
-| `deps` | Dependency updates |
+| `example`    | `examples/basic`      |
+| `ci`         | `.github/workflows`   |
+| `deps`       | Dependency updates    |
 
 ### Examples
 
@@ -243,13 +320,12 @@ removed. Use the three-argument form instead.
    git checkout -b feat/your-feature-name
    ```
 2. **Make your changes** — keep PRs focused on a single concern.
-3. **Run the full quality gate locally:**
+3. **Run the full quality gate locally** — one command, mirroring CI:
    ```bash
-   npm run typecheck
-   npm run lint
-   npm run format
-   npm test
+   npm run verify
    ```
+   This runs typecheck, lint, format check, tests, and build for every package
+   through a single Turborepo `verify` task, printing logs only for failing tasks.
 4. **Ensure all checks pass** before pushing.
 
 ### Opening the PR
@@ -272,6 +348,31 @@ removed. Use the three-argument form instead.
 ### After merge
 
 Delete your feature branch from your fork. The maintainer will delete the branch from the upstream repo.
+
+---
+
+## Dependency Updates
+
+Dependabot (`.github/dependabot.yml`) opens npm update PRs every Monday, grouped to keep review load low:
+
+| Group              | Contents                                                                                | Merge policy                                              |
+| ------------------ | --------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| `dev-dependencies` | All `devDependencies` except the Stellar/workspace packages below, in **one** weekly PR | **Auto-merged** (squash) once all required CI checks pass |
+| `stellar`          | `@stellar/*`, `@soroban-resurrect/*`, `soroban-resurrect`                               | Manual review                                             |
+| _(ungrouped)_      | Runtime (`dependencies`) updates, one PR each                                           | Manual review                                             |
+
+Auto-merge is enabled by `.github/workflows/dependabot-auto-merge.yml`, which only acts on Dependabot-authored PRs in the `dev-dependencies` group. It relies on GitHub's native auto-merge, so a PR is never merged while CI is failing or pending — this requires "Allow auto-merge" to be enabled in the repository settings and CI to be a required status check on `main`. If a grouped devDependency update breaks CI, fix it on the Dependabot branch or close the PR and pin the offending package.
+
+GitHub Actions versions are updated weekly as separate PRs and reviewed manually.
+
+---
+
+## Package Support & Deprecation
+
+See [SUPPORT.md](./SUPPORT.md) for package support status, supported release
+windows, and pre-1.0 compatibility expectations. See
+[DEPRECATION.md](./DEPRECATION.md) for the public API deprecation and removal
+procedure.
 
 ---
 
@@ -301,10 +402,31 @@ Feature requests are welcome. When opening a feature request:
 - If you have a proposed API design, include a code example.
 - Note any alternatives you considered.
 
-For large or potentially breaking features, it is a good idea to open a discussion issue first before investing time in implementation.
+For large or potentially breaking features, start a thread in [Discussions → Ideas](https://github.com/Automated-Cross-Contract-SDK/Automated-Cross-Contract-SDK-Frontend-/discussions/categories/ideas) before investing time in implementation, and check the [roadmap](./docs/roadmap.md) to see whether it is already planned.
+
+---
+
+## Code Owners & Review Assignments
+
+Review requests are automatically mapped based on the repository's [`.github/CODEOWNERS`](./.github/CODEOWNERS) configuration. Each package (`packages/*`), documentation path, and CI workflow has assigned maintainers responsible for reviewing code quality, API invariants, and security impact.
 
 ---
 
 ## License
 
 By contributing, you agree that your contributions will be licensed under the project's [MIT License](./LICENSE).
+
+### Wallet extension end-to-end tests
+
+The Playwright suite in `e2e/` is intended for a nightly or manually
+triggered CI run against a funded Stellar testnet wallet. Set `FREIGHTER_E2E=1`
+and `E2E_BASE_URL` in the workflow environment, then run:
+
+```bash
+npx playwright install --with-deps chromium
+npx playwright test
+```
+
+The test uses the wallet extension's test hooks where available. Never commit
+wallet credentials or seed phrases; configure them as CI secrets and use a
+throwaway testnet account.

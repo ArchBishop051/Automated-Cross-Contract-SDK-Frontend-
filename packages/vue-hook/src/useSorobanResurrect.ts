@@ -2,7 +2,6 @@ import {
   ref,
   computed,
   watch,
-  onUnmounted,
   shallowRef,
   toValue,
   type MaybeRefOrGetter,
@@ -34,6 +33,15 @@ export interface UseSorobanResurrectReturn {
   isSuccess: ComputedRef<boolean>
   /** Whether the last operation ended in an error. */
   isError: ComputedRef<boolean>
+  /**
+   * Archived ledger entries detected for the current workflow. Empty outside
+   * `restore_needed` and later states.
+   */
+  archivedKeys: ComputedRef<ArchivedLedgerEntry[]>
+  /** Result of the most recent `submitWithRestore` call, success or failure. */
+  lastResult: ReturnType<typeof ref<ResurrectResult | null>>
+  /** Estimated restore cost for the current workflow, when available. */
+  feeEstimate: ComputedRef<number | null>
   /** Submit a transaction with automatic archive restoration. */
   submitWithRestore: (transaction: Transaction, wallet: WalletAdapter) => Promise<ResurrectResult>
   /** Check if a transaction requires archive restoration. */
@@ -43,7 +51,8 @@ export interface UseSorobanResurrectReturn {
   /**
    * Subscribes to a typed lifecycle event (`restoreNeeded`, `restoreSubmitted`,
    * `restoreConfirmed`, `originalSubmitted`, `error`, `restoreComplete`, `stateChange`)
-   * on the current SDK instance. Returns an unsubscribe function.
+   * on the current SDK instance. Returns an unsubscribe function; any remaining
+   * subscriptions are removed when the active effect scope ends.
    */
   on: <K extends keyof SorobanResurrectEvents>(
     event: K,
@@ -58,7 +67,8 @@ export interface UseSorobanResurrectReturn {
  *
  * Subscribes to SDK state changes and exposes the full API as reactive refs.
  * Automatically creates a new SDK instance when the config changes.
- * Calls `onUnmounted` internally — no manual cleanup required.
+ * Subscriptions and the owned SDK instance are disposed when the active Vue
+ * effect scope ends — no manual cleanup required.
  *
  * @example
  * ```ts
@@ -70,35 +80,31 @@ export function useSorobanResurrect(
 ): UseSorobanResurrectReturn {
   const resurrect = shallowRef<SorobanResurrect | null>(null)
   const state = ref<RestoreStateInfo>({ state: 'idle', message: '' })
-  let unsubscribeState: (() => void) | null = null
+  const lastResult = ref<ResurrectResult | null>(null)
+  const eventUnsubscribers = new Set<() => void>()
 
   // Watch config changes and reinitialize the SDK
   watch(
     () => toValue(configRef),
-    (newConfig) => {
-      // Clean up previous subscription
-      if (unsubscribeState) {
-        unsubscribeState()
-        unsubscribeState = null
-      }
-
-      resurrect.value = new SorobanResurrect(newConfig)
+    (newConfig, _oldConfig, onCleanup) => {
+      const instance = new SorobanResurrect(newConfig)
+      resurrect.value = instance
       state.value = { state: 'idle', message: '' }
+      lastResult.value = null
 
-      unsubscribeState = resurrect.value.onStateChange((info: RestoreStateInfo) => {
+      const unsubscribeState = instance.onStateChange((info: RestoreStateInfo) => {
         state.value = info
+      })
+      onCleanup(() => {
+        unsubscribeState()
+        for (const unsubscribe of eventUnsubscribers) unsubscribe()
+        eventUnsubscribers.clear()
+        instance.dispose()
+        if (resurrect.value === instance) resurrect.value = null
       })
     },
     { immediate: true, deep: true },
   )
-
-  // Clean up on component unmount
-  onUnmounted(() => {
-    if (unsubscribeState) {
-      unsubscribeState()
-      unsubscribeState = null
-    }
-  })
 
   // Derived helpers so consumers don't re-implement state checks. `isProcessing`
   // reuses the SDK's shared `isProcessingState` (single source of truth).
@@ -107,14 +113,50 @@ export function useSorobanResurrect(
   const isSuccess = computed(() => state.value.state === 'success')
   const isError = computed(() => state.value.state === 'error')
 
+  // `archivedKeys` is only meaningful once restoration is relevant, i.e. from
+  // `restore_needed` onward. Outside those states it stays empty.
+  const archivedKeys = computed<ArchivedLedgerEntry[]>(() => {
+    const info = state.value as RestoreStateInfo & {
+      archivedKeys?: ArchivedLedgerEntry[]
+    }
+    if (info.state === 'idle' || info.state === 'detecting') return []
+    return info.archivedKeys ?? []
+  })
+
+  // `feeEstimate` mirrors the SDK-provided estimate on the state snapshot when
+  // present, falling back to the last result's estimate.
+  const feeEstimate = computed<number | null>(() => {
+    const info = state.value as RestoreStateInfo & {
+      feeEstimate?: number
+      estimatedFee?: number
+    }
+    if (typeof info.feeEstimate === 'number') return info.feeEstimate
+    if (typeof info.estimatedFee === 'number') return info.estimatedFee
+    const result = lastResult.value as (ResurrectResult & {
+      feeEstimate?: number
+      estimatedFee?: number
+    }) | null
+    if (result && typeof result.feeEstimate === 'number') return result.feeEstimate
+    if (result && typeof result.estimatedFee === 'number') return result.estimatedFee
+    return null
+  })
+
   const submitWithRestore = async (
     transaction: Transaction,
     wallet: WalletAdapter,
   ): Promise<ResurrectResult> => {
     if (!resurrect.value) {
-      return { success: false, archivedKeysDetected: 0, error: 'Not initialized' }
+      const result: ResurrectResult = {
+        success: false,
+        archivedKeysDetected: 0,
+        error: 'Not initialized',
+      }
+      lastResult.value = result
+      return result
     }
-    return resurrect.value.submitWithRestore({ transaction, wallet })
+    const result = await resurrect.value.submitWithRestore({ transaction, wallet })
+    lastResult.value = result
+    return result
   }
 
   const detectArchivedKeys = async (transaction: Transaction): Promise<ArchivedLedgerEntry[]> => {
@@ -130,7 +172,13 @@ export function useSorobanResurrect(
     event: K,
     listener: (payload: SorobanResurrectEvents[K]) => void,
   ): (() => void) => {
-    return resurrect.value?.on(event, listener) ?? (() => {})
+    const unsubscribe = resurrect.value?.on(event, listener)
+    if (!unsubscribe) return () => {}
+    eventUnsubscribers.add(unsubscribe)
+    return () => {
+      unsubscribe()
+      eventUnsubscribers.delete(unsubscribe)
+    }
   }
 
   return {
@@ -139,6 +187,9 @@ export function useSorobanResurrect(
     isIdle,
     isSuccess,
     isError,
+    archivedKeys,
+    lastResult,
+    feeEstimate,
     submitWithRestore,
     detectArchivedKeys,
     reset,

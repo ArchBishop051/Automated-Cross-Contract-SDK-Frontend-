@@ -1,4 +1,4 @@
-import { SorobanResurrectConfig } from './types.js'
+import type { SorobanResurrectConfig } from './types.js'
 import type { ISorobanRpcClient } from './RpcClient.js'
 import { SorobanRpcClient } from './RpcClient.js'
 import {
@@ -17,7 +17,6 @@ import {
   TTL_WATCH_THRESHOLD_LEDGERS,
 } from './constants.js'
 import { SimulationCache } from './SimulationCache.js'
-import { SorobanRpcClient, type ISorobanRpcClient } from './RpcClient.js'
 
 /**
  * Result of initialising the SDK configuration.
@@ -66,6 +65,75 @@ function validateBoolean(field: string, value: unknown): void {
   }
 }
 
+/** Default simulation-cache TTL (ms); matches `SimulationCache`'s built-in default. */
+export const SIMULATION_CACHE_TTL_MS = 30_000
+/** Default simulation-cache capacity; matches `SimulationCache`'s built-in default. */
+export const SIMULATION_CACHE_MAX_SIZE = 50
+
+/**
+ * Validates the shape of the fields `resolveConfig` doesn't already default
+ * or structurally guarantee — everything a caller could pass a nonsensical
+ * value for. Throws a descriptive, field-prefixed `Error` on the first
+ * problem found, rather than letting a bad value surface later as a cryptic
+ * RPC or `TransactionBuilder` failure.
+ *
+ * This is the single validation implementation in the module: it is invoked
+ * by both the constructor path (`resolveConfig`) and `switchNetwork()` so the
+ * two entry points cannot drift apart.
+ */
+export function validateConfigShape(config: SorobanResurrectConfig): void {
+  if (typeof config.rpcUrl !== 'string' || config.rpcUrl.length === 0) {
+    throw new Error(`Invalid rpcUrl: ${JSON.stringify(config.rpcUrl)}. Must be a non-empty string.`)
+  }
+  try {
+    new URL(config.rpcUrl)
+  } catch {
+    throw new Error(`Invalid rpcUrl: ${JSON.stringify(config.rpcUrl)}. Must be a valid URL.`)
+  }
+
+  if (config.pollIntervalMs !== undefined) {
+    validateNumber('pollIntervalMs', config.pollIntervalMs, 0, true)
+  }
+
+  if (config.pollTimeoutMs !== undefined) {
+    validateNumber('pollTimeoutMs', config.pollTimeoutMs, 0, true)
+  }
+
+  if (config.restoreFeeMultiplier !== undefined) {
+    validateNumber('restoreFeeMultiplier', config.restoreFeeMultiplier, 1, false)
+  }
+
+  if (
+    config.archiveDetectionMethod !== undefined &&
+    !ARCHIVE_DETECTION_METHODS.includes(config.archiveDetectionMethod)
+  ) {
+    throw new Error(
+      `Invalid archiveDetectionMethod: ${JSON.stringify(config.archiveDetectionMethod)}. ` +
+        `Must be one of: ${ARCHIVE_DETECTION_METHODS.map((m) => `"${m}"`).join(', ')}.`,
+    )
+  }
+
+  if (config.useSSE !== undefined) {
+    validateBoolean('useSSE', config.useSSE)
+  }
+
+  if (config.enableSimulationCache !== undefined) {
+    validateBoolean('enableSimulationCache', config.enableSimulationCache)
+  }
+
+  if (config.simulationCacheTtlMs !== undefined) {
+    validateNumber('simulationCacheTtlMs', config.simulationCacheTtlMs, 0, true)
+  }
+
+  if (config.simulationCacheMaxSize !== undefined) {
+    if (!Number.isInteger(config.simulationCacheMaxSize) || config.simulationCacheMaxSize < 1) {
+      throw new Error(
+        `Invalid simulationCacheMaxSize: ${JSON.stringify(config.simulationCacheMaxSize)}. Must be a positive integer.`,
+      )
+    }
+  }
+}
+
 /**
  * Validates and resolves a partial `SorobanResurrectConfig` into a fully
  * typed `ResolvedConfig`.
@@ -100,98 +168,8 @@ function validateBoolean(field: string, value: unknown): void {
  * // resolved.config.networkPassphrase === 'Test SDF Network ; September 2015'
  * ```
  */
-
-/**
- * Validates the shape of the fields `resolveConfig` doesn't already default
- * or structurally guarantee — everything a caller could pass a nonsensical
- * value for. Throws a descriptive, field-prefixed `Error` on the first
- * problem found, rather than letting a bad value surface later as a cryptic
- * RPC or `TransactionBuilder` failure.
- */
-function validateConfigShape(config: SorobanResurrectConfig): void {
-  if (typeof config.rpcUrl !== 'string' || config.rpcUrl.length === 0) {
-    throw new Error('config.rpcUrl must be a non-empty string')
-  }
-  try {
-    new URL(config.rpcUrl)
-  } catch {
-    throw new Error('config.rpcUrl must be a valid URL')
-  }
-
-  if (config.pollIntervalMs !== undefined) {
-    if (!Number.isFinite(config.pollIntervalMs) || config.pollIntervalMs <= 0) {
-      throw new Error('config.pollIntervalMs must be a finite number greater than 0')
-    }
-  }
-
-  if (config.pollTimeoutMs !== undefined) {
-    if (!Number.isFinite(config.pollTimeoutMs) || config.pollTimeoutMs <= 0) {
-      throw new Error('config.pollTimeoutMs must be a finite number greater than 0')
-    }
-  }
-
-  if (config.restoreFeeMultiplier !== undefined) {
-    if (!Number.isFinite(config.restoreFeeMultiplier) || config.restoreFeeMultiplier < 1) {
-      throw new Error(
-        'config.restoreFeeMultiplier must be a finite number greater than or equal to 1',
-      )
-    }
-  }
-
-  if (
-    config.archiveDetectionMethod !== undefined &&
-    config.archiveDetectionMethod !== 'simulation' &&
-    config.archiveDetectionMethod !== 'direct'
-  ) {
-    throw new Error("config.archiveDetectionMethod must be 'simulation' or 'direct'")
-  }
-
-  if (config.useSSE !== undefined && typeof config.useSSE !== 'boolean') {
-    throw new Error('config.useSSE must be a boolean')
-  }
-
-  if (
-    config.enableSimulationCache !== undefined &&
-    typeof config.enableSimulationCache !== 'boolean'
-  ) {
-    throw new Error('config.enableSimulationCache must be a boolean')
-  }
-}
-
 export function resolveConfig(config: SorobanResurrectConfig): ResolvedConfig {
-  if (typeof config.rpcUrl !== 'string' || config.rpcUrl.length === 0) {
-    throw new Error(`Invalid rpcUrl: ${JSON.stringify(config.rpcUrl)}. Must be a non-empty string.`)
-  }
-
-  if (config.pollIntervalMs !== undefined) {
-    validateNumber('pollIntervalMs', config.pollIntervalMs, 0, true)
-  }
-
-  if (config.pollTimeoutMs !== undefined) {
-    validateNumber('pollTimeoutMs', config.pollTimeoutMs, 0, true)
-  }
-
-  if (config.restoreFeeMultiplier !== undefined) {
-    validateNumber('restoreFeeMultiplier', config.restoreFeeMultiplier, 1, false)
-  }
-
-  if (
-    config.archiveDetectionMethod !== undefined &&
-    !ARCHIVE_DETECTION_METHODS.includes(config.archiveDetectionMethod)
-  ) {
-    throw new Error(
-      `Invalid archiveDetectionMethod: ${JSON.stringify(config.archiveDetectionMethod)}. ` +
-        `Must be one of: ${ARCHIVE_DETECTION_METHODS.map((m) => `"${m}"`).join(', ')}.`,
-    )
-  }
-
-  if (config.useSSE !== undefined) {
-    validateBoolean('useSSE', config.useSSE)
-  }
-
-  if (config.enableSimulationCache !== undefined) {
-    validateBoolean('enableSimulationCache', config.enableSimulationCache)
-  }
+  validateConfigShape(config)
 
   const server = config.rpcClient ?? new SorobanRpcClient(config.rpcUrl)
 
@@ -209,7 +187,17 @@ export function resolveConfig(config: SorobanResurrectConfig): ResolvedConfig {
     )
   }
 
-  const simulationCache = config.enableSimulationCache ? new SimulationCache() : undefined
+  // A fresh cache is built on every resolve, so switchNetwork() never reuses
+  // stale entries. Keep the TTL short relative to the ledger close time
+  // (~5s): a replayed cached restore response can report "restore needed"
+  // after the entry was already restored (or miss a newly archived entry),
+  // which at worst causes a redundant restore or a failed submission.
+  const simulationCache = config.enableSimulationCache
+    ? new SimulationCache({
+        ttlMs: config.simulationCacheTtlMs ?? SIMULATION_CACHE_TTL_MS,
+        maxSize: config.simulationCacheMaxSize ?? SIMULATION_CACHE_MAX_SIZE,
+      })
+    : undefined
 
   const resolved: Required<Omit<SorobanResurrectConfig, 'rpcClient'>> & { rpcClient: ISorobanRpcClient } = {
     rpcUrl: config.rpcUrl,
@@ -217,10 +205,25 @@ export function resolveConfig(config: SorobanResurrectConfig): ResolvedConfig {
     pollIntervalMs: config.pollIntervalMs ?? POLL_INTERVAL_MS,
     pollTimeoutMs: config.pollTimeoutMs ?? POLL_TIMEOUT_MS,
     restoreFeeMultiplier: config.restoreFeeMultiplier ?? RESTORE_FEE_MULTIPLIER,
+    rpcTimeoutMs: config.rpcTimeoutMs ?? RPC_TIMEOUT_MS,
+    rpcRetryCount: config.rpcRetryCount ?? RPC_RETRY_COUNT,
+    rpcRetryBackoffMs: config.rpcRetryBackoffMs ?? RPC_RETRY_BACKOFF_MS,
+    rpcCircuitBreakerThreshold: config.rpcCircuitBreakerThreshold ?? RPC_CIRCUIT_BREAKER_THRESHOLD,
+    rpcCircuitBreakerCooldownMs: config.rpcCircuitBreakerCooldownMs ?? RPC_CIRCUIT_BREAKER_COOLDOWN_MS,
+    ttlWatchIntervalMs: config.ttlWatchIntervalMs ?? TTL_WATCH_INTERVAL_MS,
+    ttlWatchThresholdLedgers: config.ttlWatchThresholdLedgers ?? TTL_WATCH_THRESHOLD_LEDGERS,
     archiveDetectionMethod: config.archiveDetectionMethod ?? 'simulation',
-    archiveDetectionFallback: config.archiveDetectionFallback ?? true,
-    enableSimulationCache: config.enableSimulationCache ?? false,
     useSSE: config.useSSE ?? false,
+    enableSimulationCache: config.enableSimulationCache ?? false,
+    simulationCacheTtlMs: config.simulationCacheTtlMs ?? SIMULATION_CACHE_TTL_MS,
+    simulationCacheMaxSize: config.simulationCacheMaxSize ?? SIMULATION_CACHE_MAX_SIZE,
+    rpcTimeoutMs: config.rpcTimeoutMs ?? RPC_TIMEOUT_MS,
+    rpcRetryCount: config.rpcRetryCount ?? RPC_RETRY_COUNT,
+    rpcRetryBackoffMs: config.rpcRetryBackoffMs ?? RPC_RETRY_BACKOFF_MS,
+    rpcCircuitBreakerThreshold: config.rpcCircuitBreakerThreshold ?? RPC_CIRCUIT_BREAKER_THRESHOLD,
+    rpcCircuitBreakerCooldownMs: config.rpcCircuitBreakerCooldownMs ?? RPC_CIRCUIT_BREAKER_COOLDOWN_MS,
+    ttlWatchIntervalMs: config.ttlWatchIntervalMs ?? TTL_WATCH_INTERVAL_MS,
+    ttlWatchThresholdLedgers: config.ttlWatchThresholdLedgers ?? TTL_WATCH_THRESHOLD_LEDGERS,
     rpcClient: server,
   }
 
