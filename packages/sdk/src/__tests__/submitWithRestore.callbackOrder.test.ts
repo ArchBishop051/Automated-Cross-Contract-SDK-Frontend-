@@ -5,6 +5,7 @@ import {
   Account,
   Networks,
   Operation,
+  Asset,
   Keypair,
   Transaction,
   SorobanDataBuilder,
@@ -607,7 +608,8 @@ describe('SorobanResurrect.submitWithRestore — callback invocation ordering', 
     })
 
     expect(result.success).toBe(false)
-    expect(result.error).toBe('Failed to parse signed original transaction')
+    expect(result.errorCode).toBe('UNEXPECTED_FEE_BUMP_ENVELOPE')
+    expect(result.error).toContain('fee-bump envelope')
     expect(order).toEqual([
       'onRestoreNeeded',
       'onSigningRestore',

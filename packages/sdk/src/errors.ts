@@ -84,6 +84,21 @@ export type ResurrectErrorCode =
    */
   | 'UNSUPPORTED_WALLET_CAPABILITY'
 
+  /** A restore memo is invalid or exceeds Stellar's 28-byte text memo limit. */
+  | 'INVALID_RESTORE_MEMO'
+
+  /** A caller exceeded a configured batch-size limit. */
+  | 'BATCH_SIZE_EXCEEDED'
+
+  /** A wallet returned a fee-bump envelope when a plain transaction was signed. */
+  | 'UNEXPECTED_FEE_BUMP_ENVELOPE'
+
+  /** A wallet returned a transaction with different requested transaction data. */
+  | 'SIGNED_TRANSACTION_MISMATCH'
+
+  /** Archive detection failed for one or more entries in a batch. */
+  | 'ARCHIVE_DETECTION_BATCH_FAILED'
+
   /**
    * The estimated restore fee exceeded the configured cap. Review the fee
    * limit or wait until the network fee is lower.

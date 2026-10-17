@@ -19,7 +19,6 @@ import type {
   ConfirmationPolicy,
   ConfirmationTimeoutBehavior,
 } from './types.js'
-import { WalletError } from './types.js'
 import type { ResurrectErrorCode } from './errors.js'
 import {
   OriginalTransactionExpiredError,
@@ -116,7 +115,11 @@ async function validateWalletNetwork(
 }
 
 function walletErrorMessage(error: unknown): string {
-  if (error instanceof WalletError && error.code === 'USER_REJECTED') {
+  if (
+    error instanceof Error &&
+    'code' in error &&
+    error.code === 'USER_REJECTED'
+  ) {
     return 'Signature request declined'
   }
   return error instanceof Error ? error.message : String(error)
@@ -155,6 +158,7 @@ async function signAndMaybeFeeBump(params: {
   wallet: WalletAdapter
   feeBumpConfig?: FeeBumpConfig
   networkPassphrase: string
+  config: Pick<SorobanResurrectConfig, 'logger'>
   server: ISorobanRpcClient
   signal?: AbortSignal
   onSigning?: () => void
@@ -167,6 +171,7 @@ async function signAndMaybeFeeBump(params: {
     wallet,
     feeBumpConfig,
     networkPassphrase,
+    config,
     server,
     signal,
     onSigning,
@@ -573,6 +578,7 @@ export async function executeWithRestore(params: ExecuteParams): Promise<Resurre
         wallet,
         feeBumpConfig,
         networkPassphrase,
+        config,
         server,
         onSigning: onSigningOriginal,
         onSigningFeeBump,
@@ -799,6 +805,7 @@ export interface RestoreKeysParams {
 export async function restoreKeys(params: RestoreKeysParams): Promise<ResurrectResult> {
   const { server, keys, wallet, config, signal } = params
   const networkPassphrase = config.networkPassphrase ?? DEFAULT_NETWORK_PASSPHRASE
+  assertBatchSize(keys.length, config.maxBatchSize ?? 100, 'restoreKeys')
 
   if (keys.length === 0) {
     const error = 'restoreKeys called with an empty key list'

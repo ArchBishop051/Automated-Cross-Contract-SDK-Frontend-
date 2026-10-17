@@ -15,6 +15,7 @@ import {
   buildRestoreTransaction,
   buildBatchRestoreTransaction,
   buildOriginalAfterRestore,
+  resolveRestoreMemo,
   waitForTransaction,
   extractXdrOperations,
   getExpiredTransactionInfo,
@@ -264,6 +265,7 @@ export class SorobanResurrectExecutor {
     wallet: WalletAdapter,
     opts: RestoreKeysOptions & AbortSignalOptions = {},
   ): Promise<ResurrectResult> {
+    assertBatchSize(keys.length, this._config.maxBatchSize, 'restoreKeys')
     const stateMgr = this._stateMgr
     const emitter = stateMgr.emitter
     const { signal } = opts
@@ -364,6 +366,7 @@ export class SorobanResurrectExecutor {
         archivedKeysDetected: keys.length,
         restoreTxHash: restoreHash,
         error: message,
+        ...(err instanceof ResurrectError ? { errorCode: err.code } : {}),
         historyId,
         errorCode: signal?.aborted ? 'ABORTED' : 'UNKNOWN_ERROR',
       }
@@ -458,14 +461,22 @@ export class SorobanResurrectExecutor {
     }
 
     // Per-call restore-tx memo override (falls back to instance config).
-    const effectiveConfig =
-      options.restoreTxMemo !== undefined || options.restoreTxMemoText !== undefined
+    const effectiveConfig = {
+      ...this._config,
+      ...(options.restoreTxMemo !== undefined || options.restoreTxMemoText !== undefined
         ? {
-            ...this._config,
-            restoreTxMemo: options.restoreTxMemo ?? this._config.restoreTxMemo,
-            restoreTxMemoText: options.restoreTxMemoText ?? this._config.restoreTxMemoText,
+            restoreTxMemo: options.restoreTxMemo,
+            restoreTxMemoText: options.restoreTxMemoText,
           }
-        : this._config
+        : {}),
+    }
+
+    const restoreConfig = configForWalletRestore(effectiveConfig, wallet)
+    validateRestoreMemoConfig(restoreConfig)
+
+    const historyId = this._history.add(transaction)
+    const stateMgr = this._stateMgr
+    const emitter = stateMgr.emitter
 
     const result = await executeWithRestore({
       server: options.retry ? new RetryingRpcClient(this._server, options.retry) : this._server,
@@ -686,6 +697,20 @@ export class SorobanResurrectExecutor {
       return [await this.submitWithRestore({ ...items[0], signal: options.signal })]
     }
 
+    const restoreConfigs = items.map((item) => {
+      const hasMemoOverride =
+        item.restoreTxMemo !== undefined || item.restoreTxMemoText !== undefined
+      const config = hasMemoOverride
+        ? {
+            ...this._config,
+            restoreTxMemo: item.restoreTxMemo,
+            restoreTxMemoText: item.restoreTxMemoText,
+          }
+        : this._config
+      validateRestoreMemoConfig(config)
+      return config
+    })
+
     const wallet = items[0].wallet
     const { signal: sharedSignal } = options
     const transactions = items.map((item) => item.transaction)
@@ -734,6 +759,16 @@ export class SorobanResurrectExecutor {
         results.push(await this.submitWithRestore({ ...item, signal: sharedSignal }))
       }
       return results
+    }
+    const memoSignature = (config: (typeof restoreConfigs)[number]): string => {
+      const memo = resolveRestoreMemo(undefined, config)
+      return JSON.stringify(memo ? [memo.type, memo.value] : ['none'])
+    }
+    if (restoreConfigs.some((config) => memoSignature(config) !== memoSignature(restoreConfigs[0]))) {
+      throw new ResurrectError(
+        'INVALID_RESTORE_MEMO',
+        'submitBatchWithRestore builds one shared restore transaction; all items must use the same restore memo configuration.',
+      )
     }
 
     const networkPassphrase = this._config.networkPassphrase ?? DEFAULT_NETWORK_PASSPHRASE

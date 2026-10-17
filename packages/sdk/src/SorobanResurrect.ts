@@ -68,6 +68,7 @@ export class SorobanResurrect {
   private readonly _simulator: SorobanResurrectSimulator
   private readonly _executor: SorobanResurrectExecutor
   private readonly _ttlWatches = new Set<TTLWatchHandle>()
+  readonly ready: Promise<void>
 
   // Last set of archived keys from a standalone detectArchivedKeys() call.
   // The FSM context already stores archivedKeys for the full submit workflow;
@@ -98,15 +99,6 @@ export class SorobanResurrect {
     this.logger = resolveLogger(config.logger)
 
     this._stateMgr = new SorobanResurrectStateManager()
-    // Mirror every state transition into the structured log.
-    this._stateMgr.onStateChange((info) => {
-      this.logger.debug(`state → ${info.state}`, {
-        requestId: this._requestId,
-        state: info.state,
-        message: info.message,
-        error: info.error,
-      })
-    })
     this._simulator = new SorobanResurrectSimulator(
       this._server,
       this._config,

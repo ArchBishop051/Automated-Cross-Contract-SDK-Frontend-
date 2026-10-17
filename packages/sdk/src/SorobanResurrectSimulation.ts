@@ -128,6 +128,15 @@ export class SorobanResurrectSimulator {
     }
   }
 
+  async detectArchivedKeysOrThrow(transaction: Transaction): Promise<ArchivedLedgerEntry[]> {
+    const method = this._config.archiveDetectionMethod ?? 'simulation'
+
+    if (method === 'direct') {
+      return this._detectViaDirect(transaction)
+    }
+    return this._detectViaSimulation(transaction)
+  }
+
   /**
    * Convenience wrapper — returns `true` when at least one archived entry
    * is detected for the given transaction.
@@ -194,6 +203,9 @@ export class SorobanResurrectSimulator {
    */
   private async _detectViaDirect(transaction: Transaction): Promise<ArchivedLedgerEntry[]> {
     const { detectArchivedKeysViaDirect } = await import('./Archiver.js')
-    return detectArchivedKeysViaDirect(this._server, transaction)
+    return detectArchivedKeysViaDirect(this._server, transaction, {
+      chunkSize: this._config.archiveDetectionChunkSize,
+      concurrency: this._config.archiveDetectionConcurrency,
+    })
   }
 }

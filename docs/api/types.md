@@ -23,6 +23,10 @@ interface SorobanResurrectConfig {
   archiveDetectionMethod?: 'simulation' | 'direct' // default: 'simulation'
   archiveDetectionChunkSize?: number // default: 50
   archiveDetectionConcurrency?: number // default: 4
+  maxBatchSize?: number // default: 100
+  restoreTxMemo?: Memo
+  restoreTxMemoText?: string // at most 28 UTF-8 bytes
+  logger?: Logger
 }
 ```
 
@@ -38,6 +42,17 @@ interface SorobanResurrectConfig {
 | `archiveDetectionMethod`   | Method for detecting archived keys: `'simulation'` (default) or `'direct'`.    |
 | `archiveDetectionChunkSize` | Ledger keys per `getLedgerEntries` request during `'direct'` detection.       |
 | `archiveDetectionConcurrency` | Chunk requests kept in flight at once during `'direct'` detection.          |
+| `maxBatchSize` | Maximum items accepted by `detectArchivedKeysBatch`, `submitBatchWithRestore`, and `restoreKeys`. Oversized batches fail with `BATCH_SIZE_EXCEEDED`. |
+| `restoreTxMemo` | Optional Stellar memo attached to restore transactions. Only text and none memo types are accepted; text is limited to 28 UTF-8 bytes. |
+| `restoreTxMemoText` | Convenience text memo for restore transactions, limited to 28 UTF-8 bytes (not 28 characters). May also be overridden per `submitWithRestore` call. |
+| `logger` | Optional logger. Hardware-signing warnings are sent through its `warn` method. |
+
+The memo limit is measured after UTF-8 encoding. For example, fourteen `é`
+characters use 28 bytes and fit, while fifteen use 30 bytes and are rejected
+during configuration resolution, before a wallet approval is requested.
+`submitBatchWithRestore` uses one shared restore transaction; when that
+transaction is needed, all per-item memo overrides must resolve to the same
+memo.
 
 ## `SubmitWithRestoreOptions`
 

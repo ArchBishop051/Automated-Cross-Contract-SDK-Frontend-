@@ -64,6 +64,7 @@ export function resolveRestoreMemo(
   explicit: Memo | undefined,
   config: Pick<SorobanResurrectConfig, 'restoreTxMemo' | 'restoreTxMemoText'>,
 ): Memo | undefined {
+  validateRestoreMemoConfig(config)
   if (explicit) return explicit
   if (config.restoreTxMemo) return config.restoreTxMemo
   if (config.restoreTxMemoText !== undefined && config.restoreTxMemoText !== '') {
@@ -152,6 +153,7 @@ export async function buildRestoreTransaction(params: BuildRestoreTxParams): Pro
     .setSorobanData(transactionData)
     .setTimeout(30)
 
+  const memo = resolveRestoreMemo(params.memo, config)
   if (memo) {
     builder.addMemo(memo)
   }
