@@ -8,6 +8,7 @@ import type {
   RestoreStateInfo,
   ArchivedLedgerEntry,
   ResurrectResult,
+  DryRunResult,
   SubmitWithRestoreOptions,
   RestoreKeysOptions,
   SorobanResurrectEvents,
@@ -57,8 +58,6 @@ import type { AbortSignalOptions } from './AbortUtils.js'
  * // result.historyId can be used to retry via resurrect.retry(result.historyId, wallet)
  * ```
  */
-const debug = createDebugger('core')
-
 export class SorobanResurrect {
   private _server: ISorobanRpcClient
   private _config: Required<Omit<SorobanResurrectConfig, 'rpcClient'>> & {
@@ -96,6 +95,7 @@ export class SorobanResurrect {
     const resolved = resolveConfig(config)
     this._server = resolved.server
     this._config = resolved.config
+    this.logger = resolveLogger(config.logger)
 
     this._stateMgr = new SorobanResurrectStateManager()
     // Mirror every state transition into the structured log.
@@ -464,6 +464,18 @@ export class SorobanResurrect {
     return buildRestoreCostEstimate(0, 0, this._config)
   }
 
+  /**
+   * Simulates a transaction and returns archived entries, estimated restore
+   * fee, and intended operation types without requiring a wallet or submitting
+   * any transaction.
+   *
+   * @param transaction - The transaction to preview.
+   * @returns Restore requirements and operation types, or simulation failure details.
+   */
+  async previewRestore(transaction: Transaction): Promise<DryRunResult> {
+    return this._executor.previewRestore(transaction)
+  }
+
   // ---------------------------------------------------------------------------
   // Execution
   // ---------------------------------------------------------------------------
@@ -545,6 +557,8 @@ export class SorobanResurrect {
    *
    * This method never throws — all failures are returned as
    * `ResurrectResult { success: false, error: ... }`.
+   * Set `dryRun: true` to simulate only; no wallet methods are called, no
+   * transaction is submitted, and no history entry is created.
    *
    * @param options - See {@link SubmitWithRestoreOptions}.
    * @returns {@link ResurrectResult} describing the outcome.

@@ -127,24 +127,81 @@ Submits a transaction with automatic archive restoration. If the simulation dete
 
 ##### Dry-run mode
 
-Pass `dryRun: true` to preview a restore without signing or submitting anything:
+Call `previewRestore` for a walletless preview, or pass `dryRun: true` to
+`submitWithRestore` when using the same options shape as a normal submission:
 
 ```typescript
-const result = await sr.submitWithRestore({ transaction, wallet, dryRun: true })
+const preview = await sr.previewRestore(transaction)
+console.log(preview.intendedOperations)
+console.log(preview.archivedKeys)
+console.log(preview.estimatedRestoreFee)
 
-if (result.dryRun) {
-  console.log(result.dryRunResult?.archivedKeys)
-  console.log(result.dryRunResult?.estimatedRestoreFee)
+const result = await sr.submitWithRestore({ transaction, wallet, dryRun: true })
+```
+
+Both paths simulate only and return the ordered operation type names, detected
+archived ledger entries, and estimated restore fee when needed. Neither path
+signs or submits; `previewRestore` does not require a wallet. The `dryRun`
+option also does not record history or invoke lifecycle callbacks. Simulation
+failures are returned in `simulationError` (and typed `failure` guidance), not
+silently treated as a successful preview.
+
+### Rebuilding with transaction time bounds
+
+After a successful restore, the SDK rebuilds the original operations using a fresh
+sequence number. The rebuilt transaction preserves the original absolute
+`minTime` and `maxTime` bounds; it does not turn a nearly expired bound into a new
+relative timeout. If the original `maxTime` has elapsed before rebuilding, the
+SDK refuses to extend the user's intent.
+
+When the application has explicit authorization to replace the original expiry,
+provide `approveExpiredRebuild`. It receives the original bounds and must return
+new future Unix-second bounds to approve the rebuild. Omitting the callback or
+returning `undefined` stops after the restore transaction and returns
+`ORIGINAL_TRANSACTION_EXPIRED` with an `expiredTransaction` payload:
+
+```ts
+const result = await sr.submitWithRestore({
+  transaction,
+  wallet,
+  approveExpiredRebuild: async ({ originalTimeBounds }) => {
+    const approved = await confirmReplaceExpiry(originalTimeBounds)
+    if (!approved) return undefined
+    const now = Math.floor(Date.now() / 1000)
+    return { minTime: now, maxTime: now + 60 }
+  },
+})
+```
+
+The SDK validates approved bounds and returns `INVALID_REBUILD_TIME_BOUNDS` if
+they are not valid. `rebuildTimeBounds` remains available to set bounds before
+they expire; it does not bypass the explicit approval callback for an already
+expired original. Existing transactions without time bounds retain the prior
+30-second rebuild timeout.
+
+**Compatibility:** callers that previously handled an expired bound as a
+generic error can branch on the new `ORIGINAL_TRANSACTION_EXPIRED` error code
+and inspect `result.expiredTransaction`. The SDK never automatically extends
+an expired maximum time.
+
+### Typed workflow failures
+
+Failed `submitWithRestore` results retain their readable `error` and existing
+`errorCode`, and now include `failure` metadata with a lifecycle `stage`,
+stable `code`, `retryable` flag, and safe `nextStep` guidance:
+
+```ts
+if (!result.success && result.failure) {
+  console.error(result.error) // readable diagnostic
+  showRecoveryAction(result.failure.nextStep)
+  if (result.failure.retryable) {
+    offerRetryFor(result.failure.code)
+  }
 }
 ```
 
-In dry-run mode the SDK runs archive detection plus fee estimation and returns
-`{ success: true, dryRun: true, dryRunResult }`. It performs **zero wallet calls**
-(no `signTransaction`, no `signAuthEntry`) and **zero submissions** (no
-`sendTransaction`), and it does not record anything to history. Because no wallet
-callbacks fire, none of the lifecycle callbacks in `SubmitWithRestoreOptions` are
-invoked either. If fee estimation fails, the error is surfaced on
-`dryRunResult.simulationError` rather than thrown.
+Decoded on-chain diagnostics remain available separately as
+`result.onchainError`; do not display raw diagnostic data as recovery guidance.
 
 #### `onStateChange(listener)`
 

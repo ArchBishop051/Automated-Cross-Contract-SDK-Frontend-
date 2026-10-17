@@ -13,6 +13,7 @@ import type {
   WalletAdapter,
   WalletCapabilities,
   ResurrectResult,
+  ResurrectFailure,
   SorobanResurrectConfig,
   RestoreState,
   RestoreStateInfo,
@@ -23,6 +24,8 @@ import type {
   HardwareWalletAdapter,
   FeeBumpSponsor,
   DryRunResult,
+  RebuildTimeBounds,
+  ExpiredTransactionInfo,
   TxDiagnostics,
   ISorobanRpcClient,
   KnownWallet,
@@ -48,6 +51,7 @@ type PublicExports =
   | 'SorobanResurrectNetwork'
   | 'NETWORK_PRESETS'
   | 'ResurrectError'
+  | 'OriginalTransactionExpiredError'
   | 'createAdapter'
   | 'isKnownWallet'
   | 'SUPPORTED_WALLETS'
@@ -153,6 +157,12 @@ test('SorobanResurrectConfig and result types keep their shape', () => {
   expectTypeOf<ResurrectResult['success']>().toEqualTypeOf<boolean>()
   expectTypeOf<ResurrectResult['archivedKeysDetected']>().toEqualTypeOf<number>()
   expectTypeOf<ResurrectResult['error']>().toEqualTypeOf<string | undefined>()
+  expectTypeOf<ResurrectResult['failure']>().toEqualTypeOf<ResurrectFailure | undefined>()
+  expectTypeOf<ResurrectResult['expiredTransaction']>().toEqualTypeOf<
+    ExpiredTransactionInfo | undefined
+  >()
+  expectTypeOf<ResurrectFailure['retryable']>().toEqualTypeOf<boolean>()
+  expectTypeOf<ResurrectFailure['nextStep']>().toEqualTypeOf<string>()
 
   expectTypeOf<SubmitWithRestoreOptions>().toHaveProperty('transaction')
   expectTypeOf<SubmitWithRestoreOptions>().toHaveProperty('wallet')
@@ -174,6 +184,12 @@ test('SorobanResurrectConfig and result types keep their shape', () => {
 
   expectTypeOf<FeeBumpSponsor>().toHaveProperty('signFeeBump')
   expectTypeOf<DryRunResult>().toHaveProperty('wouldNeedRestore')
+  expectTypeOf<DryRunResult>().toHaveProperty('intendedOperations')
+  expectTypeOf<SubmitWithRestoreOptions>().toHaveProperty('dryRun')
+  expectTypeOf<InstanceType<typeof sdk.SorobanResurrect>>().toHaveProperty('previewRestore')
+  expectTypeOf<RebuildTimeBounds>().toHaveProperty('maxTime')
+  expectTypeOf<SubmitWithRestoreOptions>().toHaveProperty('rebuildTimeBounds')
+  expectTypeOf<SubmitWithRestoreOptions>().toHaveProperty('approveExpiredRebuild')
   expectTypeOf<TxDiagnostics>().toHaveProperty('events')
 })
 

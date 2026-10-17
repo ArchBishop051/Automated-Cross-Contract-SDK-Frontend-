@@ -83,7 +83,9 @@ export class SorobanResurrectSimulator {
       if (cached) return cached
     }
 
-    this._stateMgr.setState('simulating', 'Simulating transaction...')
+    if (options.updateState !== false) {
+      this._stateMgr.setState('simulating', 'Simulating transaction...')
+    }
 
     const response = await runWithSignal(
       () => this._server.simulateTransaction(transaction),

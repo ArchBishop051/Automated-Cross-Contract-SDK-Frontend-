@@ -1,3 +1,5 @@
+import type { ExpiredTransactionInfo } from './types.js'
+
 /**
  * Structured error codes for ResurrectResult — similar to GraphQL's
  * `extensions.code` pattern. Consumers can branch on these codes
@@ -56,6 +58,12 @@ export type ResurrectErrorCode =
    */
   | 'ORIGINAL_TX_FAILED'
 
+  /** The original transaction expired during restoration and needs approval to rebuild. */
+  | 'ORIGINAL_TRANSACTION_EXPIRED'
+
+  /** Caller-provided replacement time bounds are invalid or already expired. */
+  | 'INVALID_REBUILD_TIME_BOUNDS'
+
   /**
    * Transaction confirmation polling timed out before a terminal status.
    * Inspect the transaction hash; the network outcome may still be pending.
@@ -75,6 +83,15 @@ export type ResurrectErrorCode =
    * "wallet not supported" message rather than a generic failure.
    */
   | 'UNSUPPORTED_WALLET_CAPABILITY'
+
+  /**
+   * The estimated restore fee exceeded the configured cap. Review the fee
+   * limit or wait until the network fee is lower.
+   */
+  | 'RESTORE_FEE_CAP_EXCEEDED'
+
+  /** The restoreKeys call received no ledger keys. */
+  | 'INVALID_RESTORE_KEYS'
 
   /**
    * An unexpected JavaScript exception was thrown during the workflow.
@@ -117,6 +134,20 @@ export class ResurrectError extends Error {
     if (Error.captureStackTrace) {
       Error.captureStackTrace(this, ResurrectError)
     }
+  }
+}
+
+/** Typed error raised when rebuilding would otherwise extend an expired transaction. */
+export class OriginalTransactionExpiredError extends ResurrectError {
+  readonly expiredTransaction: ExpiredTransactionInfo
+
+  constructor(expiredTransaction: ExpiredTransactionInfo) {
+    super(
+      'ORIGINAL_TRANSACTION_EXPIRED',
+      'Original transaction time bounds have expired; explicit approval is required to rebuild',
+    )
+    this.name = 'OriginalTransactionExpiredError'
+    this.expiredTransaction = expiredTransaction
   }
 }
 
