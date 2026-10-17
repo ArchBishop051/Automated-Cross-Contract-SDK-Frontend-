@@ -14,19 +14,19 @@ Every wallet integration implements the same contract:
 ```ts
 export interface WalletAdapter {
   /** Stable identifier, usually a `KnownWallet` value. */
-  readonly id: string;
+  readonly id: string
   /** Human readable name shown in wallet pickers. */
-  readonly name: string;
+  readonly name: string
   /** Capabilities this adapter supports. */
-  readonly capabilities: WalletCapabilities;
+  readonly capabilities: WalletCapabilities
   /** Connect and resolve the active account. */
-  connect(): Promise<WalletAccount>;
+  connect(): Promise<WalletAccount>
   /** Disconnect and release any transport resources. */
-  disconnect(): Promise<void>;
+  disconnect(): Promise<void>
   /** Sign a transaction payload. */
-  signTransaction(tx: Transaction): Promise<SignedTransaction>;
+  signTransaction(tx: Transaction): Promise<SignedTransaction>
   /** Sign an arbitrary message. */
-  signMessage(message: Uint8Array): Promise<Uint8Array>;
+  signMessage(message: Uint8Array): Promise<Uint8Array>
 }
 ```
 
@@ -37,10 +37,10 @@ value or a custom adapter class. It normalises configuration, applies defaults, 
 returns a ready-to-use `WalletAdapter`.
 
 ```ts
-import { createAdapter, KnownWallet } from '@handsoff/sdk';
+import { createAdapter, KnownWallet } from '@handsoff/sdk'
 
-const adapter = createAdapter(KnownWallet.Phantom);
-await adapter.connect();
+const adapter = createAdapter(KnownWallet.Phantom)
+await adapter.connect()
 ```
 
 It accepts either a known wallet or a custom adapter:
@@ -49,7 +49,7 @@ It accepts either a known wallet or a custom adapter:
 const adapter = createAdapter({
   wallet: KnownWallet.Ledger,
   config: { transport, manifest },
-});
+})
 ```
 
 ## `KnownWallet` and `SUPPORTED_WALLETS`
@@ -57,20 +57,20 @@ const adapter = createAdapter({
 `KnownWallet` enumerates every wallet the SDK ships an adapter for. `SUPPORTED_WALLETS`
 is the runtime list (id, name, capabilities) used to build wallet pickers.
 
-| `KnownWallet` value | Adapter | Notes |
-| --- | --- | --- |
-| `KnownWallet.Phantom` | `PhantomWalletAdapter` | Browser extension |
-| `KnownWallet.Solflare` | `SolflareWalletAdapter` | Browser extension |
-| `KnownWallet.Backpack` | `BackpackWalletAdapter` | Browser extension |
-| `KnownWallet.Glow` | `GlowWalletAdapter` | Browser extension |
-| `KnownWallet.Ledger` | `LedgerWalletAdapter` | Hardware, requires transport + manifest |
-| `KnownWallet.Trezor` | `TrezorWalletAdapter` | Hardware, requires transport + manifest |
+| `KnownWallet` value    | Adapter                 | Notes                                   |
+| ---------------------- | ----------------------- | --------------------------------------- |
+| `KnownWallet.Phantom`  | `PhantomWalletAdapter`  | Browser extension                       |
+| `KnownWallet.Solflare` | `SolflareWalletAdapter` | Browser extension                       |
+| `KnownWallet.Backpack` | `BackpackWalletAdapter` | Browser extension                       |
+| `KnownWallet.Glow`     | `GlowWalletAdapter`     | Browser extension                       |
+| `KnownWallet.Ledger`   | `LedgerWalletAdapter`   | Hardware, requires transport + manifest |
+| `KnownWallet.Trezor`   | `TrezorWalletAdapter`   | Hardware, requires transport + manifest |
 
 ```ts
-import { SUPPORTED_WALLETS } from '@handsoff/sdk';
+import { SUPPORTED_WALLETS } from '@handsoff/sdk'
 
 for (const wallet of SUPPORTED_WALLETS) {
-  console.log(wallet.id, wallet.name, wallet.capabilities);
+  console.log(wallet.id, wallet.name, wallet.capabilities)
 }
 ```
 
@@ -79,13 +79,13 @@ for (const wallet of SUPPORTED_WALLETS) {
 Each adapter advertises what it can do. The SDK branches on these flags, so an
 unsupported operation fails fast instead of silently degrading.
 
-| Flag | Meaning | SDK behaviour that depends on it |
-| --- | --- | --- |
-| `signTransaction` | Can sign transactions | `signTransaction()` is exposed; otherwise the call throws `UnsupportedCapabilityError` |
-| `signMessage` | Can sign arbitrary messages | `signMessage()` is exposed; used by auth / SIWS flows |
-| `hardware` | Backed by a hardware device | Enables transport lifecycle management and blind-signing warnings |
-| `blindSigning` | Device can sign without full display | SDK emits a blind-signing warning before signing |
-| `multiAccount` | Can expose multiple accounts | Account picker is shown after `connect()` |
+| Flag              | Meaning                              | SDK behaviour that depends on it                                                       |
+| ----------------- | ------------------------------------ | -------------------------------------------------------------------------------------- |
+| `signTransaction` | Can sign transactions                | `signTransaction()` is exposed; otherwise the call throws `UnsupportedCapabilityError` |
+| `signMessage`     | Can sign arbitrary messages          | `signMessage()` is exposed; used by auth / SIWS flows                                  |
+| `hardware`        | Backed by a hardware device          | Enables transport lifecycle management and blind-signing warnings                      |
+| `blindSigning`    | Device can sign without full display | SDK emits a blind-signing warning before signing                                       |
+| `multiAccount`    | Can expose multiple accounts         | Account picker is shown after `connect()`                                              |
 
 ## Hardware wallets
 
@@ -99,10 +99,10 @@ npm install @ledgerhq/hw-transport-webhid @ledgerhq/hw-app-solana
 ```
 
 ```ts
-import TransportWebHID from '@ledgerhq/hw-transport-webhid';
-import { createAdapter, KnownWallet } from '@handsoff/sdk';
+import TransportWebHID from '@ledgerhq/hw-transport-webhid'
+import { createAdapter, KnownWallet } from '@handsoff/sdk'
 
-const transport = await TransportWebHID.create();
+const transport = await TransportWebHID.create()
 
 const adapter = createAdapter({
   wallet: KnownWallet.Ledger,
@@ -114,7 +114,7 @@ const adapter = createAdapter({
       icon: 'https://example.com/icon.png',
     },
   } satisfies LedgerAdapterConfig,
-});
+})
 ```
 
 ### Trezor
@@ -209,6 +209,48 @@ Decoded on-chain diagnostics remain available separately as
 onStateChange(listener: (info: RestoreStateInfo) => void): () => void
 ```
 
+#### Framework-independent subscription store
+
+`createSubscriptionStore<T>(initialSnapshot)` provides a small typed external
+store that does not depend on React, Vue, Svelte, or another UI framework. It is
+intended for framework bindings and adapters that need a stable snapshot,
+synchronous change notifications, and an unsubscribe handle.
+
+```typescript
+import { createSubscriptionStore } from '@soroban-resurrect/sdk'
+
+const store = createSubscriptionStore({ state: 'idle' })
+const unsubscribe = store.subscribe((snapshot) => {
+  console.log(snapshot.state)
+})
+
+store.setSnapshot({ state: 'success' })
+console.log(store.getSnapshot())
+unsubscribe()
+```
+
+Subscribers are called only when the snapshot changes according to `Object.is`.
+The returned `unsubscribe` function is safe to call more than once.
+
+#### Cancelling workflows and disposing an instance
+
+Pass an `AbortSignal` to `submitWithRestore` to cancel the local workflow:
+
+```typescript
+const controller = new AbortController()
+const pending = resurrect.submitWithRestore({ transaction, wallet, signal: controller.signal })
+
+controller.abort()
+const result = await pending // { success: false, error: 'Operation cancelled', ... }
+```
+
+Cancellation prevents subsequent workflow stages and interrupts transaction
+polling. It cannot reverse an already-submitted on-chain transaction or
+dismiss a wallet prompt if the adapter does not support that. Call
+`resurrect.dispose()` when an owned SDK instance is no longer needed; it stops
+tracked TTL watches and removes state and event listeners. Disposal is
+idempotent.
+
 ### Latency and UX
 
 Hardware signing is interactive: the user must confirm on the device. Expect
@@ -221,18 +263,18 @@ warns the user that the device cannot display the full payload before they confi
 Implement `WalletAdapter` and pass the class to `createAdapter`:
 
 ```ts
-import { createAdapter, type WalletAdapter } from '@handsoff/sdk';
+import { createAdapter, type WalletAdapter } from '@handsoff/sdk'
 
 class MyWalletAdapter implements WalletAdapter {
-  readonly id = 'my-wallet';
-  readonly name = 'My Wallet';
+  readonly id = 'my-wallet'
+  readonly name = 'My Wallet'
   readonly capabilities = {
     signTransaction: true,
     signMessage: false,
     hardware: false,
     blindSigning: false,
     multiAccount: false,
-  };
+  }
 
   async connect() {
     /* ... */
@@ -244,11 +286,11 @@ class MyWalletAdapter implements WalletAdapter {
     /* ... */
   }
   async signMessage() {
-    throw new Error('signMessage is not supported');
+    throw new Error('signMessage is not supported')
   }
 }
 
-const adapter = createAdapter({ adapter: MyWalletAdapter });
+const adapter = createAdapter({ adapter: MyWalletAdapter })
 ```
 
 ## `estimateRestoreCost`
@@ -260,20 +302,18 @@ of the base fee. It is the natural companion to a "this will cost extra because 
 needs a restore" confirmation step.
 
 ```ts
-export function estimateRestoreCost(
-  transaction: Transaction,
-): Promise<RestoreCostEstimate>;
+export function estimateRestoreCost(transaction: Transaction): Promise<RestoreCostEstimate>
 ```
 
 ### `RestoreCostEstimate`
 
-| Field | Type | Meaning |
-| --- | --- | --- |
-| `minResourceFee` | `number` | Minimum resource fee (in stroops) the network charges for the restore operation. |
-| `multiplier` | `number` | Fee multiplier applied to `minResourceFee` to derive `estimatedFee`. |
-| `estimatedFee` | `number` | Total estimated restore fee (in stroops): `minResourceFee * multiplier`. |
-| `archivedKeysDetected` | `PublicKey[]` | Ledger keys referenced by the transaction that are currently archived. |
-| `wouldNeedRestore` | `boolean` | Whether the transaction would trigger a restore at all. |
+| Field                  | Type          | Meaning                                                                          |
+| ---------------------- | ------------- | -------------------------------------------------------------------------------- |
+| `minResourceFee`       | `number`      | Minimum resource fee (in stroops) the network charges for the restore operation. |
+| `multiplier`           | `number`      | Fee multiplier applied to `minResourceFee` to derive `estimatedFee`.             |
+| `estimatedFee`         | `number`      | Total estimated restore fee (in stroops): `minResourceFee * multiplier`.         |
+| `archivedKeysDetected` | `PublicKey[]` | Ledger keys referenced by the transaction that are currently archived.           |
+| `wouldNeedRestore`     | `boolean`     | Whether the transaction would trigger a restore at all.                          |
 
 ### Zero-fee behaviour
 
@@ -285,30 +325,30 @@ confirmation prompt entirely.
 ### Worked example: confirm the cost before signing
 
 ```ts
-import { estimateRestoreCost } from '@handsoff/sdk';
+import { estimateRestoreCost } from '@handsoff/sdk'
 
-const estimate = await estimateRestoreCost(transaction);
+const estimate = await estimateRestoreCost(transaction)
 
 if (estimate.wouldNeedRestore) {
   // Surface the extra cost to the user before they sign.
-  const feeInSol = estimate.estimatedFee / 1e9;
+  const feeInSol = estimate.estimatedFee / 1e9
   const confirmed = await confirm({
     title: 'This transaction needs a restore',
     message:
       `${estimate.archivedKeysDetected.length} archived key(s) will be restored. ` +
       `Estimated extra fee: ${feeInSol} SOL.`,
-  });
+  })
 
   if (!confirmed) {
-    return; // User declined — do not sign or submit.
+    return // User declined — do not sign or submit.
   }
 } else {
   // wouldNeedRestore === false: no restore, no extra fee.
-  console.log('No restore needed; estimatedFee is 0.');
+  console.log('No restore needed; estimatedFee is 0.')
 }
 
-const signed = await adapter.signTransaction(transaction);
-await submit(signed);
+const signed = await adapter.signTransaction(transaction)
+await submit(signed)
 ```
 
 See the [fee model guide](../guide/fee-model.md) for how the restore fee fits into
@@ -325,4 +365,7 @@ restore state before it is archived.
 
 const debug = createDebugger('soroban-resurrect:my-app')
 debug('restore started for %d keys', keys.length)
+
+```
+
 ```

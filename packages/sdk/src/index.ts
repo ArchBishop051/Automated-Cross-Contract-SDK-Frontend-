@@ -11,6 +11,8 @@
 // Main class
 // ---------------------------------------------------------------------------
 export { SorobanResurrect } from './SorobanResurrect.js'
+export { createSubscriptionStore } from './SubscriptionStore.js'
+export type { SubscriptionListener, SubscriptionStore } from './SubscriptionStore.js'
 
 // ---------------------------------------------------------------------------
 // Network presets / switching helper
@@ -37,8 +39,11 @@ export type {
   ResurrectFailureStage,
   TxDiagnostics,
   DryRunResult,
-  RebuildTimeBounds,
-  ExpiredTransactionInfo,
+  ConfirmationPolicy,
+  ConfirmationTimeoutBehavior,
+  SubmitRetryOptions,
+  SubmitLifecyclePhase,
+  SubmitLifecycleEvent,
   SubmitWithRestoreOptions,
   RestoreKeysOptions,
   RestoreState,
@@ -58,11 +63,8 @@ export type {
 } from './types.js'
 export type { WalletErrorCode } from './types.js'
 export { WalletError } from './types.js'
-export {
-  ResurrectError,
-  OriginalTransactionExpiredError,
-  RestoreFeeExceededError,
-} from './errors.js'
+export { ResurrectError, RestoreFeeExceededError } from './errors.js'
+export type { AbortSignalOptions } from './AbortUtils.js'
 
 // ---------------------------------------------------------------------------
 // RPC abstraction layer (dependency injection / testing — see RpcClient.ts)

@@ -39,91 +39,137 @@ interface SorobanResurrectConfig {
 | `archiveDetectionChunkSize` | Ledger keys per `getLedgerEntries` request during `'direct'` detection.       |
 | `archiveDetectionConcurrency` | Chunk requests kept in flight at once during `'direct'` detection.          |
 
-## `RebuildTimeBounds`
+## `SubmitWithRestoreOptions`
 
-Absolute Unix-second time bounds for the transaction rebuilt after a restore.
-`maxTime` must be a safe integer later than the time at which the SDK rebuilds
-the transaction. `minTime` is optional and defaults to `0`.
+`submitWithRestore(options)` accepts per-request recovery controls. Retry is
+**disabled by default**; opt in only for operations where repeating an RPC call
+is acceptable:
 
-```typescript
-interface RebuildTimeBounds {
-  minTime?: number
-  maxTime: number
-}
-
-interface SubmitWithRestoreOptions {
-  rebuildTimeBounds?: RebuildTimeBounds
-  approveExpiredRebuild?: (
-    expiredTransaction: ExpiredTransactionInfo,
-  ) => RebuildTimeBounds | undefined | Promise<RebuildTimeBounds | undefined>
-}
+```ts
+const result = await sr.submitWithRestore({
+  transaction,
+  wallet,
+  retry: {
+    maxRetries: 3, // retries after the first attempt
+    baseDelayMs: 250,
+    maxDelayMs: 5_000,
+  },
+})
 ```
 
-Use `rebuildTimeBounds` to set bounds while the original transaction is still
-valid. If it expires during restore, the SDK requires `approveExpiredRebuild`
-to return replacement bounds; otherwise the SDK returns a typed outcome rather
-than extending the transaction's intent. Transactions with no bounds retain
-the existing 30-second rebuild timeout.
+The SDK retries transient transport errors, HTTP 408/425/429/5xx responses,
+known temporary network failures, and Soroban's explicit `TRY_AGAIN_LATER`
+submission response. Backoff is exponential with jitter and is capped by
+`maxDelayMs`. The retry wrapper applies only to RPC calls: it never repeats
+wallet prompts, wallet rejection, invalid transaction errors, simulation
+failures, on-chain failures, or deterministic contract errors. Because a
+transport failure during submission can occur after the server accepted the
+transaction, retries resend the same signed transaction bytes rather than
+rebuilding or re-signing it.
 
-If the original expires during restore, the result uses
-`ORIGINAL_TRANSACTION_EXPIRED` and includes `expiredTransaction`. To continue
-the same workflow, `SubmitWithRestoreOptions.approveExpiredRebuild` must return
-new future bounds; returning `undefined` or omitting it stops before the
-original transaction is signed or submitted.
+| Option | Default when `retry` is supplied | Meaning |
+| --- | ---: | --- |
+| `maxRetries` | `3` | Number of additional RPC attempts; `0` disables retries for this request. |
+| `baseDelayMs` | `250` | Initial exponential-backoff delay. |
+| `maxDelayMs` | `5000` | Maximum delay between attempts. |
 
-## `ExpiredTransactionInfo`
+### Lifecycle events
 
-Describes the original finite bounds and the Unix-second time at which expiry
-was detected.
+`SubmitWithRestoreOptions.onLifecycleEvent` receives a discriminated
+`SubmitLifecycleEvent` for each phase. The identical events are available to
+instance subscribers through `sr.on('workflowLifecycle', listener)`:
 
-```typescript
-interface ExpiredTransactionInfo {
-  originalTimeBounds: {
-    minTime: number
-    maxTime: number
+```ts
+const unsubscribe = sr.on('workflowLifecycle', (event) => {
+  switch (event.phase) {
+    case 'simulation_started':
+    case 'restore_preparation_started':
+    case 'restore_submission_started':
+    case 'restore_submitted':
+    case 'restore_confirmation_started':
+    case 'restore_confirmed':
+    case 'original_submission_started':
+    case 'original_submitted':
+    case 'original_confirmation_started':
+    case 'original_confirmed':
+    case 'completed':
+    case 'failed':
+      updateProgress(event)
+      break
   }
-  detectedAt: number
+})
+```
+
+Every event may include the supplied `requestId`; transaction hashes, detected
+keys, terminal results, and errors are included when applicable. Call
+`unsubscribe()` when the listener is no longer needed. Existing stage-specific
+callbacks and events remain available.
+
+### Logical request deduplication
+
+Pass a stable, non-empty `requestId` to coalesce concurrent calls that represent
+the same logical operation:
+
+```ts
+const options = { transaction, wallet, requestId: `withdrawal:${userActionId}` }
+const [first, duplicate] = await Promise.all([
+  sr.submitWithRestore(options),
+  sr.submitWithRestore(options),
+])
+// Both callers receive the same result; only one restore/submission flow runs.
+```
+
+Deduplication is scoped to one SDK instance and only lasts while the request is
+in flight. A later call using the same id starts a new attempt. Different ids
+remain independent and may run concurrently. A coalesced caller receives the
+first call's result; callbacks are invoked only for the call that started the
+flow. Calls without `requestId` retain the prior, non-deduplicated behavior.
+An empty or whitespace-only id returns a validation error without starting a
+workflow.
+
+### Confirmation policy and timeout
+
+The default, `confirmationPolicy: 'wait-for-finality'`, waits until Soroban RPC
+reports a terminal `SUCCESS` or `FAILED` status for the original transaction.
+Successful results include `confirmationStatus: 'confirmed'`. This waits for
+the ledger outcome rather than merely the RPC submission acknowledgment; it can
+add polling latency and remains subject to the configured timeout.
+
+Set `confirmationPolicy: 'return-on-submission'` to return after the RPC accepts
+the original transaction. This yields `success: true` with
+`confirmationStatus: 'submitted'`; it does **not** establish whether the
+transaction later succeeds or fails. A required restore transaction is always
+confirmed before the original transaction is rebuilt and submitted.
+
+`confirmationTimeoutMs` overrides the configured `pollTimeoutMs` for restore
+and original transaction confirmation. On timeout the default behavior returns
+`success: false`, `errorCode: 'CONFIRMATION_TIMEOUT'`, and the submitted hash
+without claiming an on-chain failure. Set
+`confirmationTimeoutBehavior: 'return-pending'` to additionally report
+`confirmationStatus: 'pending'`:
+
+```ts
+const result = await sr.submitWithRestore({
+  transaction,
+  wallet,
+  confirmationTimeoutMs: 90_000,
+  confirmationTimeoutBehavior: 'return-pending',
+})
+
+if (result.confirmationStatus === 'pending') {
+  // The outcome is unknown; inspect the hash or resume polling.
+  console.log(result.originalTxHash ?? result.restoreTxHash)
 }
 ```
 
-## `DryRunResult`
+When RPC reports a terminal `FAILED` status, the result instead uses
+`ORIGINAL_TX_FAILED` (or `RESTORE_TX_FAILED` for a restore failure) and includes
+decoded `onchainError` information when available.
 
-Returned by `SorobanResurrect.previewRestore()` and by
-`submitWithRestore({ dryRun: true })`. The preview simulates the transaction
-without signing or submitting it and includes operation type names in their
-original order.
-
-```typescript
-interface DryRunResult {
-  wouldNeedRestore: boolean
-  intendedOperations: string[]
-  archivedKeysDetected: number
-  archivedKeys: ArchivedLedgerEntry[]
-  estimatedRestoreFee?: FeeStroops
-  simulationError?: string
-  failure?: ResurrectFailure
-}
-```
-
-## `ResurrectFailure`
-
-Failure results may include `failure` in addition to the existing readable
-`error` and `errorCode` fields. Use this stable metadata for lifecycle-aware
-handling rather than parsing the message.
-
-```typescript
-interface ResurrectFailure {
-  stage: 'simulation' | 'restore' | 'rebuild' | 'signing' | 'submission' | 'confirmation' | 'unknown'
-  code: ResurrectErrorCode
-  retryable: boolean
-  nextStep: string
-}
-```
-
-`nextStep` is safe user-facing guidance and does not include raw RPC or contract
-diagnostics. When the network supplies a failed transaction result,
-`ResurrectResult.onchainError` continues to expose its readable decoded
-details separately.
+Restore workflows now wait for the original transaction's terminal status
+before reporting success, correcting the former early-return behavior for that
+path. Applications that relied on the earlier return can opt into
+`return-on-submission`.
 
 ## `SorobanResurrectNetwork`
 

@@ -198,6 +198,7 @@ describe('full restore workflow integration', () => {
       'getAccount',
       'simulateTransaction',
       'sendTransaction:original',
+      'getTransaction',
     ])
 
     // Wallet signs both the restore and the rebuilt original transaction.

@@ -19,6 +19,7 @@ import type {
   RestoreStateInfo,
   SorobanResurrectEvents,
   SubmitWithRestoreOptions,
+  AbortSignalOptions,
   ArchivedLedgerEntry,
   HardwareWalletAdapter,
   FeeBumpSponsor,
@@ -35,6 +36,10 @@ import type {
   TransactionHistoryEntry,
   LedgerEntryTTLInfo,
   RestoreCostEstimate,
+  ConfirmationPolicy,
+  ConfirmationTimeoutBehavior,
+  SubmitRetryOptions,
+  SubmitLifecycleEvent,
 } from '../index.js'
 
 /**
@@ -161,6 +166,20 @@ test('SorobanResurrectConfig and result types keep their shape', () => {
 
   expectTypeOf<SubmitWithRestoreOptions>().toHaveProperty('transaction')
   expectTypeOf<SubmitWithRestoreOptions>().toHaveProperty('wallet')
+  expectTypeOf<AbortSignalOptions['signal']>().toEqualTypeOf<AbortSignal | undefined>()
+  expectTypeOf<Parameters<SorobanResurrect['submitWithRestore']>[0]>().toHaveProperty('signal')
+  expectTypeOf<Parameters<SorobanResurrect['retry']>[2]>().toMatchTypeOf<AbortSignalOptions>()
+  expectTypeOf<Parameters<SorobanResurrect['sendTransaction']>[2]>().toMatchTypeOf<AbortSignalOptions>()
+  expectTypeOf<
+    Parameters<SorobanResurrect['submitBatchWithRestore']>[1]
+  >().toMatchTypeOf<AbortSignalOptions>()
+  expectTypeOf<Parameters<SorobanResurrect['restoreKeys']>[2]>().toHaveProperty('signal')
+  expectTypeOf<
+    Parameters<SorobanResurrect['buildRestoreTx']>[3]
+  >().toMatchTypeOf<AbortSignalOptions>()
+  expectTypeOf<
+    Parameters<SorobanResurrect['buildBatchRestoreTx']>[2]
+  >().toMatchTypeOf<AbortSignalOptions>()
   expectTypeOf<ArchivedLedgerEntry>().toHaveProperty('keyBase64')
 
   expectTypeOf<FeeBumpSponsor>().toHaveProperty('signFeeBump')
@@ -207,4 +226,17 @@ test('scan / multisig / history / TTL public types exist', () => {
   expectTypeOf<TransactionHistoryEntry>().not.toBeAny()
   expectTypeOf<LedgerEntryTTLInfo>().not.toBeAny()
   expectTypeOf<RestoreCostEstimate>().not.toBeAny()
+})
+
+test('recovery policies and lifecycle types are stable public types', () => {
+  expectTypeOf<ConfirmationPolicy>().toEqualTypeOf<
+    'wait-for-finality' | 'return-on-submission'
+  >()
+  expectTypeOf<ConfirmationTimeoutBehavior>().toEqualTypeOf<'error' | 'return-pending'>()
+  expectTypeOf<SubmitRetryOptions>().toHaveProperty('maxRetries')
+  expectTypeOf<SubmitLifecycleEvent['phase']>().toMatchTypeOf<string>()
+  expectTypeOf<SubmitWithRestoreOptions>().toHaveProperty('requestId')
+  expectTypeOf<SubmitWithRestoreOptions>().toHaveProperty('confirmationPolicy')
+  expectTypeOf<SubmitWithRestoreOptions>().toHaveProperty('confirmationTimeoutMs')
+  expectTypeOf<SubmitWithRestoreOptions>().toHaveProperty('confirmationTimeoutBehavior')
 })
