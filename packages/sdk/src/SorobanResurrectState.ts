@@ -1,4 +1,9 @@
-import { ArchivedLedgerEntry, RestoreState, RestoreStateInfo, SorobanResurrectEvents } from './types.js'
+import {
+  ArchivedLedgerEntry,
+  RestoreState,
+  RestoreStateInfo,
+  SorobanResurrectEvents,
+} from './types.js'
 import { TypedEventEmitter, type WithIndexSignature } from './EventEmitter.js'
 
 /**
@@ -153,6 +158,12 @@ export class SorobanResurrectStateManager {
     return () => {
       this._listeners = this._listeners.filter((l) => l !== listener)
     }
+  }
+
+  /** Remove every state and typed-event listener owned by this manager. */
+  dispose(): void {
+    this._listeners = []
+    this.emitter.removeAllListeners()
   }
 
   // ---------------------------------------------------------------------------

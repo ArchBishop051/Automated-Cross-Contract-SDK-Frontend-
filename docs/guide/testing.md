@@ -134,6 +134,17 @@ Lower-level functions such as `executeWithRestore`, `waitForTransaction`, and
 `server` parameter, so the same test doubles work at that level too if you're
 testing below the `SorobanResurrect` facade.
 
+The SDK's `src/__tests__/fixtures/soroban-rpc/v1.ts` fixture set covers success,
+restore-required, error, malformed, and extended simulation response shapes.
+Keep representative RPC shape changes in a new fixture version and exercise
+them through the response guards and extraction helpers.
+
+To verify published package files rather than workspace links, first build the
+packages and then run `npm run test:packed-exports`. It packs each package with
+an `exports` map, installs the tarballs in a temporary clean project, smoke
+tests every declared runtime export, checks declaration imports with TypeScript,
+and verifies required peer dependencies resolve.
+
 See also: [API Reference](/api/sdk), [`SorobanResurrectConfig`](/api/types#sorobanresurrectconfig).
 
 ## Shared mock-RPC harness
